@@ -1,0 +1,15 @@
+{
+    "namespace": "default", 
+    "auto_create_namespace": true, 
+    "max_home_volume_size": "100Mi",
+    "default_pod": { "image": "ubuntu" },
+    "users": [
+        {
+            "username": "theduke",
+            "ssh_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCya8/bWDySXCQQNJ4T7PWp/UW12P7gTp8iM6//vsDijJUSNTB1E0i8cU64YzuCCTvLu2wWAEJscyFd8A460psxg9s1m6O/6ACRsjH7XyMHsAqGSoevARx9K2BkuuYP+ZHfVH1ueHZkRRgMEIVrULqQ51s7sfwiAwooLHfU006qC2BlwuaPQdNm9jTOjeSCg3/TOzRx2VEarvhyi3y7BqZncDdFNclrfKFmbJGe+RHESZ9yOZrhYGEU6MhMfJ31e+uNHh2+DRDkWrCKiWWIC7HJfYLFmfghOndo7kvycFNwsn6glhnXHJmPO4aLUn613CQ67TIDlNWn7or8idjeQIy3HYoRoNDVa6RkQ17jk9p2rKxBJgElt955lyHxlhMmIThfEr8JoMcJzjwi8SnHxuL+3M4wcTxshCoJ+IovCud0ZTjPAz7+uBzu4RDx5YcFKhCaAX+GzorErRfGrPw0II9R52EucRdpEFgV0uRxSmH5iKu4XjyEXew6YKDTrIOKCa0= theduke@nixos"
+        }
+    ],
+    "pod_template": {
+        "containers": []
+    }
+}
