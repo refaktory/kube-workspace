@@ -1,3 +1,5 @@
+//! The Kubernetes operator tooling that handles all interaction with a cluster.
+
 use anyhow::Context;
 use k8s_openapi::{
     api::core::v1::{

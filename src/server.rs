@@ -1,5 +1,10 @@
+//! Webserver that serves the API.
+
 use crate::operator::Operator;
 
+/// Start the webserver.
+///
+/// Blocks indefinitely.
 pub async fn run_server(op: Operator) {
     let port = op.config().server_port.unwrap_or(8080);
     let routes = filters::routes(op);
@@ -8,6 +13,8 @@ pub async fn run_server(op: Operator) {
 }
 
 mod api {
+    //! API handler logic and types.
+
     use crate::{operator, AnyError};
 
     use super::Operator;
@@ -114,6 +121,8 @@ mod api {
 }
 
 mod filters {
+    //! `warp` filters that define routing and parse/extract queries.
+
     use super::{api, handlers, Operator};
 
     use warp::{path, Filter};
@@ -153,6 +162,9 @@ mod filters {
 }
 
 mod handlers {
+    //! Warp handler functions that take input and produce responses.
+    //! These methods contain the actual endpoint logic.
+
     use super::{api, Operator};
     use std::convert::Infallible;
 
