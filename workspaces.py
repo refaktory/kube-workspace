@@ -15,6 +15,7 @@ import json
 import urllib.request
 import time
 from urllib.parse import urlparse
+from enum import Enum
 
 AnyDict = typing.Dict[str, typing.Any]
 
@@ -150,10 +151,18 @@ class SshAddress(typing.TypedDict):
     port: int
 
 
-class PodStatus(typing.TypedDict):
-    """Api response for the PodStart and PodStatus query."""
+class WorkspacePhase(Enum):
+    NOT_FOUND = "not_found"
+    STARTING = "starting"
+    READY = "ready"
+    TERMINATING = "terminating"
+    UNKNOWN = "unknown"
 
-    is_ready: bool
+
+class WorkspaceStatus(typing.TypedDict):
+    """Api response for the PodStart and WorkspaceStatus query."""
+
+    phase: WorkspacePhase
     ssh_address: typing.Optional[SshAddress]
 
 
@@ -179,7 +188,7 @@ class Api:
         res = urllib.request.urlopen(req)
         res_data = json.load(res)
         if "Ok" in res_data:
-            data = res["Ok"]
+            data = res_data["Ok"]
             assert isinstance(data, object)
             return data
         if "Error" in res_data:
@@ -187,20 +196,29 @@ class Api:
             raise Exception("API request failed: " + msg)
         raise Exception("Invalid API response")
 
-    def pod_start(self) -> PodStatus:
+    def pod_start(self) -> WorkspaceStatus:
         """Start a workspace."""
 
-        output = self.query(
+        data = self.query(
             {
                 "PodStart": {
                     "username": self.config.username,
                     "ssh_public_key": self.config.ssh_key,
                 },
             }
-        )["PodStart"]
-        return typing.cast(PodStatus, output)
+        )
+        status = data["PodStart"]
+        return {
+            "phase": WorkspacePhase(status["phase"]),
+            "ssh_address": {
+                "port": status["ssh_address"]["port"],
+                "address": status["ssh_address"]["address"],
+            }
+            if status["ssh_address"]
+            else None,
+        }
 
-    def pod_status(self) -> PodStatus:
+    def pod_status(self) -> WorkspaceStatus:
         """Get the current status of a workspace."""
 
         data = self.query(
@@ -211,7 +229,16 @@ class Api:
                 },
             }
         )
-        return typing.cast(PodStatus, data["PodStatus"])
+        status = data["PodStatus"]
+        return {
+            "phase": WorkspacePhase(status["phase"]),
+            "ssh_address": {
+                "port": status["ssh_address"]["port"],
+                "address": status["ssh_address"]["address"],
+            }
+            if status["ssh_address"]
+            else None,
+        }
 
     def pod_stop(self) -> None:
         """Stop a workspace."""
@@ -228,21 +255,30 @@ class Api:
 def run_start(api: Api) -> None:
     """Run the `start` commmand."""
 
-    print("Starting pod...")
-    res = api.pod_start()
-    print("Started. Waiting for pod to become reachable...")
-    while True:
-        res = api.pod_status()
-        if res["is_ready"] and res["ssh_address"]:
-            break
-        print("*", end="", flush=True)
-        time.sleep(1)
-
-    print("\nPod is ready!")
-
     user_prefix = (
         api.config.username + "@" if current_username() != api.config.username else ""
     )
+
+    status = api.pod_status()
+    ssh = status["ssh_address"]
+    if status["phase"] == WorkspacePhase.READY and isinstance(ssh, dict):
+        print("Your workspace is already running!")
+        port = ssh["port"]
+        addr = ssh["address"]
+        print(f"Connect via ssh -p {port} {user_prefix}{addr}")
+        return
+
+    print("Launching your workspace.")
+    print("This might take a few minutes. Please be patient.")
+    while True:
+        res = api.pod_start()
+        if res["phase"] == WorkspacePhase.READY:
+            break
+        print("*", end="", flush=True)
+        time.sleep(2)
+
+    print("\nPod is ready!")
+
     assert isinstance(res["ssh_address"], dict)
     ssh = res["ssh_address"]
     if ssh:
@@ -256,16 +292,20 @@ def run_start(api: Api) -> None:
 def run_stop(api: Api) -> None:
     """Run the `stop` command."""
 
-    print("Stopping pod...")
+    status = api.pod_status()
+    if status["phase"] == WorkspacePhase.NOT_FOUND:
+        print("Your workspace is already stopped")
+        return
+
+    print("Stopping workspace...")
     api.pod_stop()
-    # TODO: poll until termination is complete
-    # while True:
-    #     res = api.pod_status()
-    #     if res['is_ready'] and res['ssh_address']:
-    #         break
-    #     print('*', end='')
-    #     time.sleep(1)
-    print("Pod was deleted")
+    while True:
+        res = api.pod_status()
+        if res["phase"] == WorkspacePhase.NOT_FOUND:
+            break
+        print("*", end="")
+        time.sleep(2)
+    print("\nWorkspace was shut down.")
     print("Run workspaces.py start to start it again")
 
 
@@ -331,8 +371,8 @@ def run() -> None:
         ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
 
     if os.path.isfile(ssh_key_path):
-        with open(ssh_key_path) as file:
-            ssh_key = file.read().strip()
+        with open(ssh_key_path) as keyfile:
+            ssh_key = keyfile.read().strip()
     else:
         print(
             "Error: Could not determine ssh key path to use: no file at " + ssh_key_path

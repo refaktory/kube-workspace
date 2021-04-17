@@ -19,7 +19,7 @@ mod api {
 
     use super::Operator;
 
-    pub async fn run_query(op: Operator, query: Query) -> Result<QueryOutput, AnyError> {
+    pub async fn run_query(op: Operator, query: &Query) -> Result<QueryOutput, AnyError> {
         tracing::trace!(?query, "Handling API request");
         match query {
             Query::PodStart(create) => {
@@ -37,8 +37,8 @@ mod api {
                     .zip(port)
                     .map(|(address, port)| SshAddress { address, port });
 
-                Ok(QueryOutput::PodStart(PodStatus {
-                    is_ready: operator::pod_is_ready(&status.pod),
+                Ok(QueryOutput::PodStart(WorkspaceStatus {
+                    phase: status.phase,
                     ssh_address,
                 }))
             }
@@ -46,7 +46,7 @@ mod api {
                 let user = op
                     .config()
                     .verify_user(&req.username, &req.ssh_public_key)?;
-                let status = op.user_pod_status(user).await?;
+                let status = op.workspace_status(user).await?;
 
                 let addr = status.public_address();
                 let port = status.ssh_port();
@@ -54,8 +54,8 @@ mod api {
                     .zip(port)
                     .map(|(address, port)| SshAddress { address, port });
 
-                Ok(QueryOutput::PodStatus(PodStatus {
-                    is_ready: operator::pod_is_ready(&status.pod),
+                Ok(QueryOutput::PodStatus(WorkspaceStatus {
+                    phase: status.phase,
                     ssh_address,
                 }))
             }
@@ -101,15 +101,15 @@ mod api {
     }
 
     #[derive(serde::Serialize, Clone, Debug)]
-    pub struct PodStatus {
-        is_ready: bool,
+    pub struct WorkspaceStatus {
+        phase: operator::WorkspacePhase,
         ssh_address: Option<SshAddress>,
     }
 
     #[derive(serde::Serialize, Clone, Debug)]
     pub enum QueryOutput {
-        PodStart(PodStatus),
-        PodStatus(PodStatus),
+        PodStart(WorkspaceStatus),
+        PodStatus(WorkspaceStatus),
         PodStop {},
     }
 
@@ -123,10 +123,11 @@ mod api {
 mod filters {
     //! `warp` filters that define routing and parse/extract queries.
 
-    use super::{api, handlers, Operator};
-
     use warp::{path, Filter};
 
+    use super::{api, handlers, Operator};
+
+    /// Builds all server routes.
     pub fn routes(
         op: Operator,
     ) -> impl warp::Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -135,6 +136,7 @@ mod filters {
             .with(warp::log("server"))
     }
 
+    /// Primary API endpoint.
     fn api_query(
         op: Operator,
     ) -> impl warp::Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
@@ -172,12 +174,14 @@ mod handlers {
         query: api::Query,
         op: Operator,
     ) -> Result<impl warp::Reply, Infallible> {
-        let res = match api::run_query(op, query).await {
+        let res = api::run_query(op, &query).await;
+        tracing::trace!(query=?query, response=?res, "api_query_resolved");
+        let output = match res {
             Ok(out) => api::ApiResult::Ok(out),
             Err(err) => api::ApiResult::Error {
                 message: err.to_string(),
             },
         };
-        Ok(warp::reply::json(&res))
+        Ok(warp::reply::json(&output))
     }
 }

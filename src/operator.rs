@@ -143,7 +143,7 @@ impl Operator {
             .map_err(Into::into)
     }
 
-    pub async fn find_user_service(
+    pub async fn get_user_service_opt(
         &self,
         user: &config::User,
     ) -> Result<Option<Service>, AnyError> {
@@ -155,7 +155,7 @@ impl Operator {
     }
 
     pub async fn ensure_user_service(&self, user: &config::User) -> Result<Service, AnyError> {
-        if let Some(claim) = self.find_user_service(user).await? {
+        if let Some(claim) = self.get_user_service_opt(user).await? {
             Ok(claim)
         } else {
             self.create_user_service(user).await
@@ -222,35 +222,42 @@ impl Operator {
         &self,
         user: &config::User,
         spec: &PodSpec,
-    ) -> Result<UserPodStatus, AnyError> {
+    ) -> Result<WorkspaceStatus, AnyError> {
         tracing::debug!(user=%user.username, "Ensuring pod for user");
         self.ensure_user_home_volume(user).await?;
         let service = self.ensure_user_service(user).await?;
 
         // Try to find running pod.
         let pod_name = Self::user_pod_name(user);
+
         let pod = if let Some(pod) = self.get_user_pod_opt(user).await? {
             pod
         } else {
             self.create_user_pod(user, spec).await?
         };
 
-        let node = if let Some(node_name) = pod.spec.as_ref().and_then(|x| x.node_name.clone()) {
-            Some(self.client.node(&node_name).await?)
+        let node_name_opt = pod.spec.as_ref().and_then(|x| x.node_name.as_ref());
+        let node = if let Some(name) = node_name_opt {
+            Some(self.client.node(name).await?)
         } else {
             None
         };
 
         tracing::info!(user=%user.username, pod=%pod_name, "Pod for user ensured");
 
-        Ok(UserPodStatus { pod, service, node })
+        Ok(WorkspaceStatus {
+            phase: WorkspacePhase::from_pod(&pod),
+            pod: Some(pod),
+            service: Some(service),
+            node,
+        })
     }
 
-    pub async fn user_pod_status(&self, user: &config::User) -> Result<UserPodStatus, AnyError> {
-        let service = self.get_user_service(user).await?;
+    pub async fn workspace_status(&self, user: &config::User) -> Result<WorkspaceStatus, AnyError> {
+        let service = self.get_user_service_opt(user).await?;
         let pod = self.get_user_pod_opt(user).await?;
 
-        match (service, pod) {
+        match (service.clone(), pod) {
             (Some(service), Some(pod)) => {
                 let node =
                     if let Some(node_name) = pod.spec.as_ref().and_then(|x| x.node_name.clone()) {
@@ -258,9 +265,19 @@ impl Operator {
                     } else {
                         None
                     };
-                Ok(UserPodStatus { service, pod, node })
+                Ok(WorkspaceStatus {
+                    service: Some(service),
+                    node,
+                    phase: WorkspacePhase::from_pod(&pod),
+                    pod: Some(pod),
+                })
             }
-            _ => Err(anyhow::anyhow!("pod_not_found")),
+            _ => Ok(WorkspaceStatus {
+                phase: WorkspacePhase::NotFound,
+                service,
+                pod: None,
+                node: None,
+            }),
         }
     }
 
@@ -388,6 +405,7 @@ impl Operator {
             .pod_create(ns, &schema)
             .await
             .context("Could not create pod for user")?;
+        tracing::info!(user=%user.username, "user_pod_created");
         Ok(pod)
     }
 
@@ -411,14 +429,59 @@ impl Operator {
     }
 }
 
+/// The current status phase of a user workspace.
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum WorkspacePhase {
+    #[serde(rename = "not_found")]
+    NotFound,
+    #[serde(rename = "starting")]
+    Starting,
+    #[serde(rename = "ready")]
+    Ready,
+    #[serde(rename = "terminating")]
+    Terminating,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+impl WorkspacePhase {
+    pub fn from_pod(pod: &Pod) -> Self {
+        let phase = pod
+            .status
+            .as_ref()
+            .and_then(|s| s.phase.as_ref())
+            .map(|x| x.as_str());
+        match phase {
+            _ if pod.metadata.deletion_timestamp.is_some() => Self::Terminating,
+            Some("Pending") => Self::Starting,
+            Some("Running") if pod_containers_ready(pod) => Self::Ready,
+            Some("Running") => Self::Starting,
+            Some("Succeeded") => Self::Terminating,
+            Some("Failed") => Self::Terminating,
+            Some("Unknown") => Self::Unknown,
+            Some(other) => {
+                tracing::warn!(
+                    stauts=%other,
+                    "Internal error: unhandled pod status '{}' \
+                    - please file a bug report",
+                    other
+                );
+                Self::Unknown
+            }
+            None => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct UserPodStatus {
-    pub service: Service,
-    pub pod: Pod,
+pub struct WorkspaceStatus {
+    pub phase: WorkspacePhase,
+    pub service: Option<Service>,
+    pub pod: Option<Pod>,
     pub node: Option<Node>,
 }
 
-impl UserPodStatus {
+impl WorkspaceStatus {
     /// Get the public address where the pod SSH can be reached.
     /// Can be an IP or a hostname.
     pub fn public_address(&self) -> Option<String> {
@@ -427,15 +490,19 @@ impl UserPodStatus {
 
     /// Get the SSH port for the pod.
     pub fn ssh_port(&self) -> Option<i32> {
-        service_get_nodeport(&self.service)
+        self.service.as_ref().and_then(service_get_nodeport)
     }
 }
 
+/// Extract the NodePort of a `Service`.
 pub fn service_get_nodeport(svc: &Service) -> Option<i32> {
     svc.spec.as_ref()?.ports.as_ref()?.first()?.node_port
 }
 
-pub fn pod_is_ready(pod: &Pod) -> bool {
+/// Determine if all containers of a `Pod` are ready.
+/// Ready means that they are up and running and are passing the readinessCheck
+/// if one is configured.
+fn pod_containers_ready(pod: &Pod) -> bool {
     pod.status
         .as_ref()
         .and_then(|x| x.container_statuses.as_ref())
