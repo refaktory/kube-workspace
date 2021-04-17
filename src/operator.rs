@@ -135,13 +135,13 @@ impl Operator {
         format!("workspace-{}", user.username)
     }
 
-    pub async fn get_user_service(&self, user: &config::User) -> Result<Option<Service>, AnyError> {
-        let name = Self::user_service_name(user);
-        self.client
-            .service_opt(&self.config.namespace, &name)
-            .await
-            .map_err(Into::into)
-    }
+    // pub async fn get_user_service(&self, user: &config::User) -> Result<Option<Service>, AnyError> {
+    //     let name = Self::user_service_name(user);
+    //     self.client
+    //         .service_opt(&self.config.namespace, &name)
+    //         .await
+    //         .map_err(Into::into)
+    // }
 
     pub async fn get_user_service_opt(
         &self,

@@ -147,6 +147,7 @@ mod filters {
             .and_then(handlers::api_query)
     }
 
+    /// Parse a JSON request body.
     fn json_body<T>() -> impl Filter<Extract = (T,), Error = warp::Rejection> + Clone
     where
         T: Send + serde::de::DeserializeOwned,
@@ -156,6 +157,7 @@ mod filters {
         warp::body::content_length_limit(1024 * 16).and(warp::body::json())
     }
 
+    /// Kubernetes healthcheck endpoint.
     fn healthcheck(
         _op: Operator,
     ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
