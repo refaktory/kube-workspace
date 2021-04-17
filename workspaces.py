@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
-# Python client CLI for Kubernetes workspaces.
+
+"""CLI client for the kube-workspace-operator workspace manager.
+Allows starting and stopping workspaces on a Kubernetes cluster.
+"""
 
 from __future__ import annotations
 
-import os, typing, getpass, argparse, sys, json, urllib.request, time
+import os
+import typing
+import getpass
+import argparse
+import sys
+import json
+import urllib.request
+import time
 from urllib.parse import urlparse
-
-from pprint import pprint
 
 AnyDict = typing.Dict[str, typing.Any]
 
 # CLI config file.
 class ConfigFile:
+    """Parsed config file settings."""
+
     username: typing.Optional[str]
     ssh_key_path: typing.Optional[str]
     api_url: typing.Optional[str]
-
-    def default(self, o: object) -> AnyDict:
-        return o.__dict__
 
     def __init__(
         self,
@@ -31,11 +38,17 @@ class ConfigFile:
 
     @staticmethod
     def user_path() -> str:
+        """Get the default config file path for the current user"""
+
         return os.path.expanduser("~/.config/kube-workspaces/config.json")
 
     # Prompts for config options and creates the config file.
     @staticmethod
     def initialize() -> ConfigFile:
+        """Initialize a config file by prompting the user for settings and
+        writing the file to the default location.
+        """
+
         url: typing.Optional[str] = None
         while not url:
             url = input("API URL (http://DOMAIN.com[:port]): ")
@@ -87,34 +100,35 @@ class ConfigFile:
         print(f"Config written to {path}")
         return config
 
-    # Load config from disk.
-    # If auto_initialize is true, prompts the user for config options.
-    # Otherwise, it returns an empty config if file does not exist.
     @staticmethod
     def load(
         auto_initialize: bool, custom_path: typing.Optional[str] = None
     ) -> ConfigFile:
+        """Load config from disk.
+        If auto_initialize is true, prompts the user for config options.
+        Otherwise, it returns an empty config if file does not exist.
+        """
+
         path: str = custom_path or ConfigFile.user_path()
         if os.path.isfile(path):
             data: typing.Optional[typing.Dict[str, str]] = None
-            with open(path) as f:
-                data = json.load(f)
+            with open(path) as file:
+                data = json.load(file)
             if not data:
                 return ConfigFile(None, None, None)
-            else:
-                return ConfigFile(
-                    user=data["username"],
-                    ssh_key_path=data["ssh_key_path"],
-                    api_url=data["api_url"],
-                )
-        elif auto_initialize:
+            return ConfigFile(
+                user=data["username"],
+                ssh_key_path=data["ssh_key_path"],
+                api_url=data["api_url"],
+            )
+        if auto_initialize:
             return ConfigFile.initialize()
-        else:
-            return ConfigFile(None, None, None)
+        return ConfigFile(None, None, None)
 
 
-# Materialized CLI config.
 class Config:
+    """Materialized CLI config."""
+
     username: str
     ssh_key: str
     api_url: str
@@ -125,27 +139,36 @@ class Config:
         self.api_url = api_url
 
     def api_endpoint(self) -> str:
+        """Compute query endpoint."""
         return self.api_url + "/api/query"
 
 
 class SshAddress(typing.TypedDict):
+    """API type for an ssh address and port."""
+
     address: str
     port: int
 
 
 class PodStatus(typing.TypedDict):
+    """Api response for the PodStart and PodStatus query."""
+
     is_ready: bool
     ssh_address: typing.Optional[SshAddress]
 
 
 # API CLient.
 class Api:
+    """API Client."""
+
     config: Config
 
     def __init__(self, config: Config):
         self.config = config
 
-    def request(self, data: AnyDict) -> AnyDict:
+    def query(self, data: AnyDict) -> AnyDict:
+        """Send a query to the API."""
+
         data_json = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(
             self.config.api_endpoint(),
@@ -159,14 +182,15 @@ class Api:
             data = res["Ok"]
             assert isinstance(data, object)
             return data
-        elif "Error" in res_data:
+        if "Error" in res_data:
             msg = res_data["Error"]["message"]
             raise Exception("API request failed: " + msg)
-        else:
-            raise Exception("Invalid API response")
+        raise Exception("Invalid API response")
 
     def pod_start(self) -> PodStatus:
-        output = self.request(
+        """Start a workspace."""
+
+        output = self.query(
             {
                 "PodStart": {
                     "username": self.config.username,
@@ -177,7 +201,9 @@ class Api:
         return typing.cast(PodStatus, output)
 
     def pod_status(self) -> PodStatus:
-        data = self.request(
+        """Get the current status of a workspace."""
+
+        data = self.query(
             {
                 "PodStatus": {
                     "username": self.config.username,
@@ -188,7 +214,8 @@ class Api:
         return typing.cast(PodStatus, data["PodStatus"])
 
     def pod_stop(self) -> None:
-        self.request(
+        """Stop a workspace."""
+        self.query(
             {
                 "PodStop": {
                     "username": self.config.username,
@@ -198,8 +225,9 @@ class Api:
         )
 
 
-# Run the 'start' command.
 def run_start(api: Api) -> None:
+    """Run the `start` commmand."""
+
     print("Starting pod...")
     res = api.pod_start()
     print("Started. Waiting for pod to become reachable...")
@@ -216,13 +244,18 @@ def run_start(api: Api) -> None:
         api.config.username + "@" if current_username() != api.config.username else ""
     )
     assert isinstance(res["ssh_address"], dict)
-    print(
-        f"Connect via ssh -p {res['ssh_address']['port']} {user_prefix}{res['ssh_address']['address']}"
-    )
+    ssh = res["ssh_address"]
+    if ssh:
+        port = ssh["port"]
+        addr = ssh["address"]
+        print(f"Connect via ssh -p {port} {user_prefix}{addr}")
+    else:
+        print("SSH not ready yet - call `start` again")
 
 
-# Run the 'stop' command.
 def run_stop(api: Api) -> None:
+    """Run the `stop` command."""
+
     print("Stopping pod...")
     api.pod_stop()
     # TODO: poll until termination is complete
@@ -236,12 +269,14 @@ def run_stop(api: Api) -> None:
     print("Run workspaces.py start to start it again")
 
 
-# Get the current username from the OS.
 def current_username() -> str:
+    """Get the current username from the OS."""
     return getpass.getuser()
 
 
 class Args(typing.TypedDict):
+    """Parsed command line arguments."""
+
     command: str
     user: typing.Optional[str]
     ssh_key_path: typing.Optional[str]
@@ -250,6 +285,8 @@ class Args(typing.TypedDict):
 
 
 def parse_args() -> Args:
+    """Parse CLI arguments with argparse."""
+
     parser = argparse.ArgumentParser(description="Kubernetes workspace manager")
     parser.add_argument(
         "--user", help="Username to use. Defaults to the current OS username"
@@ -268,8 +305,8 @@ def parse_args() -> Args:
 
     subs = parser.add_subparsers(dest="subcommand", required=True)
 
-    start = subs.add_parser("start", help="Start your workspace container.")
-    stop = subs.add_parser("stop", help="Stop your workspace container.")
+    subs.add_parser("start", help="Start your workspace container.")
+    subs.add_parser("stop", help="Stop your workspace container.")
 
     args = parser.parse_args()
     assert isinstance(args.subcommand, str)
@@ -282,8 +319,9 @@ def parse_args() -> Args:
     }
 
 
-# Run the CLI.
 def run() -> None:
+    """Run the CLI."""
+
     args = parse_args()
     file = ConfigFile.load(not args["api_url"], custom_path=args["config_path"])
 
@@ -293,8 +331,8 @@ def run() -> None:
         ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
 
     if os.path.isfile(ssh_key_path):
-        with open(ssh_key_path) as f:
-            ssh_key = f.read().strip()
+        with open(ssh_key_path) as file:
+            ssh_key = file.read().strip()
     else:
         print(
             "Error: Could not determine ssh key path to use: no file at " + ssh_key_path
