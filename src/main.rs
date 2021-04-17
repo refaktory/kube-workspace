@@ -6,6 +6,11 @@ mod server;
 pub(crate) type AnyError = anyhow::Error;
 
 fn main() {
+    // Set default logging level to info.
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+    // Initialize logging backend.
     tracing_subscriber::fmt::init();
 
     let config = match config::Config::load_from_env() {
