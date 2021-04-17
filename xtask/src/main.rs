@@ -19,7 +19,7 @@ fn lint_rust() -> Result<(), DynError> {
 
 fn lint_ui() -> Result<(), DynError> {
     run("mypy", &["--strict", "workspaces.py"])?;
-    eprintln!("Checking formatting of workspaces.py:");
+    run("pylint", &["workspaces.py"])?;
     run("black", &["--check", "workspaces.py"])
 }
 

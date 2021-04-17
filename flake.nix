@@ -48,6 +48,8 @@
               black
               # Python type checker.
               mypy
+              # Python linter.
+              python38Packages.pylint
 
               # kind (Kubernetes in Docker) for integration tests.
               # Custom package because no official one exists in nixpks.
