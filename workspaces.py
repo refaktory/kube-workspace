@@ -40,8 +40,8 @@ class ConfigFile:
         return os.path.expanduser("~/.config/kube-workspaces/config.json")
 
     # Prompts for config options and creates the config file.
-    @staticmethod
-    def initialize() -> ConfigFile:
+    @classmethod
+    def initialize(cls) -> ConfigFile:
         """Initialize a config file by prompting the user for settings and
         writing the file to the default location.
         """
@@ -56,10 +56,7 @@ class ConfigFile:
             except:
                 url = ""
 
-        user: Optional[str] = None
-        user = input("Username (leave empty to use current system user): ").strip()
-        if not user:
-            user = None
+        user = input("Username (leave empty to use current system user): ").strip() or None
 
         default_ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
         ssh_path: Optional[str]
@@ -86,7 +83,7 @@ class ConfigFile:
                     else:
                         break
 
-        config = ConfigFile(username=user, ssh_key_path=ssh_path, api_url=url)
+        config = cls(username=user, ssh_key_path=ssh_path, api_url=url)
 
         path = ConfigFile.user_path()
         config_dir = os.path.dirname(path)
