@@ -20,6 +20,10 @@ from enum import Enum
 
 AnyDict = Dict[str, Any]
 
+class ApiException(Exception):
+    def __init__(self, message: str):
+        self.message = message
+
 # CLI config file.
 @dataclass(frozen=True)
 class ConfigFile:
@@ -178,60 +182,50 @@ class Api:
             return data
         if "Error" in res_data:
             msg = res_data["Error"]["message"]
-            raise Exception("API request failed: " + msg)
+            raise ApiException(msg)
         raise Exception("Invalid API response")
 
-    def pod_start(self) -> WorkspaceStatus:
-        """Start a workspace."""
-
-        data = self.query(
+    def _query_pod(self, what: str) -> WorkspaceStatus:
+        query = \
             {
-                "PodStart": {
+                what: {
                     "username": self.config.username,
                     "ssh_public_key": self.config.ssh_key,
                 },
             }
-        )
-        status = data["PodStart"]
+        try:
+            data = self.query(query)
+        except ApiException as e:
+            # kind of special status for not found via Error response
+            if e.message == "pod_not_found":
+                return WorkspaceStatus(WorkspacePhase.NOT_FOUND, None)
+            else:
+                raise e
+
+        status = data[what]
+
         # Todo: there is no phase field in response but:
         #  {'PodStatus': {'is_ready': True, 'ssh_address': {'address': '192.168.1.14', 'port': 30734}}}
-        #  hence status only ready or unknown now, needs to be aligned with server
+        #  hence status is only ready or unknown now, phases need to be aligned with server
         phase = WorkspacePhase("ready") if status.get("is_ready", False) else WorkspacePhase("unknown")
         ssh_address = SshAddress(status["ssh_address"]["address"], int(status["ssh_address"]["port"])) \
-            if status["ssh_address"] else None
+            if status.get("ssh_address", None) else None
         return WorkspaceStatus(phase, ssh_address)
+
+
+    def pod_start(self) -> WorkspaceStatus:
+        """Start a workspace."""
+        return self._query_pod("PodStart")
 
 
     def pod_status(self) -> WorkspaceStatus:
         """Get the current status of a workspace."""
+        return self._query_pod("PodStatus")
 
-        data = self.query(
-            {
-                "PodStatus": {
-                    "username": self.config.username,
-                    "ssh_public_key": self.config.ssh_key,
-                },
-            }
-        )
-        status = data["PodStatus"]
-        # Todo: there is no phase field in response but:
-        #  {'PodStatus': {'is_ready': True, 'ssh_address': {'address': '192.168.1.14', 'port': 30734}}}
-        #  hence status only ready or unknown now, needs to be aligned with server
-        phase = WorkspacePhase("ready") if status.get("is_ready", False) else WorkspacePhase("unknown")
-        ssh_address = SshAddress(status["ssh_address"]["address"], int(status["ssh_address"]["port"])) \
-            if status["ssh_address"] else None
-        return WorkspaceStatus(phase, ssh_address)
 
     def pod_stop(self) -> None:
         """Stop a workspace."""
-        self.query(
-            {
-                "PodStop": {
-                    "username": self.config.username,
-                    "ssh_public_key": self.config.ssh_key,
-                },
-            }
-        )
+        self._query_pod("PodStop")
 
 
 def run_start(api: Api) -> None:
