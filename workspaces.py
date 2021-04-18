@@ -7,31 +7,31 @@ Allows starting and stopping workspaces on a Kubernetes cluster.
 from __future__ import annotations
 
 import os
-import typing
 import getpass
 import argparse
 import sys
 import json
 import urllib.request
 import time
+from typing import Any, Dict, Optional, TypedDict
 from urllib.parse import urlparse
 from enum import Enum
 
-AnyDict = typing.Dict[str, typing.Any]
+AnyDict = Dict[str, Any]
 
 # CLI config file.
 class ConfigFile:
     """Parsed config file settings."""
 
-    username: typing.Optional[str]
-    ssh_key_path: typing.Optional[str]
-    api_url: typing.Optional[str]
+    username: Optional[str]
+    ssh_key_path: Optional[str]
+    api_url: Optional[str]
 
     def __init__(
         self,
-        user: typing.Optional[str],
-        ssh_key_path: typing.Optional[str],
-        api_url: typing.Optional[str],
+        user: Optional[str],
+        ssh_key_path: Optional[str],
+        api_url: Optional[str],
     ):
         self.username = user
         self.ssh_key_path = ssh_key_path
@@ -50,7 +50,7 @@ class ConfigFile:
         writing the file to the default location.
         """
 
-        url: typing.Optional[str] = None
+        url: Optional[str] = None
         while not url:
             url = input("API URL (http://DOMAIN.com[:port]): ")
             try:
@@ -60,13 +60,13 @@ class ConfigFile:
             except:
                 url = ""
 
-        user: typing.Optional[str] = None
+        user: Optional[str] = None
         user = input("Username (leave empty to use current system user): ").strip()
         if not user:
             user = None
 
         default_ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
-        ssh_path: typing.Optional[str]
+        ssh_path: Optional[str]
         if os.path.isfile(default_ssh_key_path):
             print("Default SSH key detected at " + default_ssh_key_path)
             while True:
@@ -103,7 +103,7 @@ class ConfigFile:
 
     @staticmethod
     def load(
-        auto_initialize: bool, custom_path: typing.Optional[str] = None
+        auto_initialize: bool, custom_path: Optional[str] = None
     ) -> ConfigFile:
         """Load config from disk.
         If auto_initialize is true, prompts the user for config options.
@@ -112,7 +112,7 @@ class ConfigFile:
 
         path: str = custom_path or ConfigFile.user_path()
         if os.path.isfile(path):
-            data: typing.Optional[typing.Dict[str, str]] = None
+            data: Optional[Dict[str, str]] = None
             with open(path) as file:
                 data = json.load(file)
             if not data:
@@ -129,11 +129,6 @@ class ConfigFile:
 
 class Config:
     """Materialized CLI config."""
-
-    username: str
-    ssh_key: str
-    api_url: str
-
     def __init__(self, username: str, ssh_key: str, api_url: str):
         self.username = username
         self.ssh_key = ssh_key
@@ -144,7 +139,7 @@ class Config:
         return self.api_url + "/api/query"
 
 
-class SshAddress(typing.TypedDict):
+class SshAddress(TypedDict):
     """API type for an ssh address and port."""
 
     address: str
@@ -159,11 +154,11 @@ class WorkspacePhase(Enum):
     UNKNOWN = "unknown"
 
 
-class WorkspaceStatus(typing.TypedDict):
+class WorkspaceStatus(TypedDict):
     """Api response for the PodStart and WorkspaceStatus query."""
 
     phase: WorkspacePhase
-    ssh_address: typing.Optional[SshAddress]
+    ssh_address: Optional[SshAddress]
 
 
 # API CLient.
@@ -314,14 +309,14 @@ def current_username() -> str:
     return getpass.getuser()
 
 
-class Args(typing.TypedDict):
+class Args(TypedDict):
     """Parsed command line arguments."""
 
     command: str
-    user: typing.Optional[str]
-    ssh_key_path: typing.Optional[str]
-    api_url: typing.Optional[str]
-    config_path: typing.Optional[str]
+    user: Optional[str]
+    ssh_key_path: Optional[str]
+    api_url: Optional[str]
+    config_path: Optional[str]
 
 
 def parse_args() -> Args:
