@@ -44,6 +44,34 @@ class ConfigFile:
 
         return os.path.expanduser("~/.config/kube-workspaces/config.json")
 
+    @staticmethod
+    def initialize_ssh_path() -> str:
+        """Prompt for and return path to public shh key file"""
+        default_ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
+        ssh_path: Optional[str]
+        if os.path.isfile(default_ssh_key_path):
+            print("Default SSH key detected at " + default_ssh_key_path)
+            while True:
+                ssh_path = input("Alternative key (leave empty to use default): ").strip()
+                if ssh_path:
+                    if not os.path.isfile(ssh_path):
+                        print("Path is not valid")
+                    else:
+                        break
+                else:
+                    ssh_path = default_ssh_key_path
+                    break
+        else:
+            print("No default SSH key detected")
+            while True:
+                ssh_path = input("SSH key path: ").strip()
+                if ssh_path:
+                    if not os.path.isfile(ssh_path):
+                        print("Path is not valid")
+                    else:
+                        break
+        return ssh_path
+
     # Prompts for config options and creates the config file.
     @classmethod
     def initialize(cls) -> ConfigFile:
@@ -58,37 +86,14 @@ class ConfigFile:
                 res = urlparse(url)
                 if not res.scheme in ["http", "https"]:
                     url = ""
-            except:
+            except Exception:  # pylint: disable=broad-except
                 url = ""
 
         user = (
             input("Username (leave empty to use current system user): ").strip() or None
         )
 
-        default_ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
-        ssh_path: Optional[str]
-        if os.path.isfile(default_ssh_key_path):
-            print("Default SSH key detected at " + default_ssh_key_path)
-            while True:
-                ssh_path = input(
-                    "Alternative key (leave empty to use default): "
-                ).strip()
-                if ssh_path:
-                    if not os.path.isfile(ssh_path):
-                        print("Path is not valid")
-                    else:
-                        break
-                else:
-                    break
-        else:
-            print("No default SSH key detected")
-            while True:
-                ssh_path = input("SSH key path: ").strip()
-                if ssh_path:
-                    if not os.path.isfile(ssh_path):
-                        print("Path is not valid")
-                    else:
-                        break
+        ssh_path = cls.initialize_ssh_path()
 
         config = cls(username=user, ssh_key_path=ssh_path, api_url=url)
 
@@ -96,10 +101,11 @@ class ConfigFile:
         config_dir = os.path.dirname(path)
         if not os.path.isdir(config_dir):
             os.makedirs(config_dir)
-        with open(path, mode="w") as f:
-            json.dump(asdict(config), f)
+        with open(path, mode="w") as file:
+            json.dump(asdict(config), file)
         print(f"Config written to {path}")
         return config
+
 
     @staticmethod
     def load(auto_initialize: bool, custom_path: Optional[str] = None) -> ConfigFile:
@@ -147,6 +153,7 @@ class SshAddress:
 
 
 class WorkspacePhase(Enum):
+    """Enum of server side WorkspacePhase"""
     NOT_FOUND = "not_found"
     STARTING = "starting"
     READY = "ready"
@@ -239,10 +246,14 @@ def run_start(api: Api) -> None:
         print(f"Connect via ssh -p {port} {user_prefix}{addr}")
         return
 
-    print("Launching your workspace.")
+    curent_phase = status.phase
+    print(f"Launching your workspace from phase: {curent_phase.value}")
     print("This might take a few minutes. Please be patient.")
     while True:
         res = api.pod_start()
+        if res.phase != curent_phase:
+            print(f"{res.phase.value}->", end="")
+            curent_phase = res.phase
         if res.phase == WorkspacePhase.READY:
             break
         print("*", end="", flush=True)
