@@ -20,9 +20,14 @@ from enum import Enum
 
 AnyDict = Dict[str, Any]
 
+
 class ApiException(Exception):
+    """Exception from API error"""
+
     def __init__(self, message: str):
         self.message = message
+        super().__init__(message)
+
 
 # CLI config file.
 @dataclass(frozen=True)
@@ -56,7 +61,9 @@ class ConfigFile:
             except:
                 url = ""
 
-        user = input("Username (leave empty to use current system user): ").strip() or None
+        user = (
+            input("Username (leave empty to use current system user): ").strip() or None
+        )
 
         default_ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
         ssh_path: Optional[str]
@@ -95,9 +102,7 @@ class ConfigFile:
         return config
 
     @staticmethod
-    def load(
-        auto_initialize: bool, custom_path: Optional[str] = None
-    ) -> ConfigFile:
+    def load(auto_initialize: bool, custom_path: Optional[str] = None) -> ConfigFile:
         """Load config from disk.
         If auto_initialize is true, prompts the user for config options.
         Otherwise, it returns an empty config if file does not exist.
@@ -123,6 +128,7 @@ class ConfigFile:
 @dataclass(frozen=True)
 class Config:
     """Materialized CLI config."""
+
     username: str
     ssh_key: str
     api_url: str
@@ -135,6 +141,7 @@ class Config:
 @dataclass(frozen=True)
 class SshAddress:
     """API type for an ssh address and port."""
+
     address: str
     port: int
 
@@ -150,6 +157,7 @@ class WorkspacePhase(Enum):
 @dataclass(frozen=True)
 class WorkspaceStatus:
     """Api response for the PodStart and WorkspaceStatus query."""
+
     phase: WorkspacePhase
     ssh_address: Optional[SshAddress]
 
@@ -183,42 +191,46 @@ class Api:
         raise Exception("Invalid API response")
 
     def _query_pod(self, what: str) -> WorkspaceStatus:
-        query = \
-            {
-                what: {
-                    "username": self.config.username,
-                    "ssh_public_key": self.config.ssh_key,
-                },
-            }
+        query = {
+            what: {
+                "username": self.config.username,
+                "ssh_public_key": self.config.ssh_key,
+            },
+        }
         try:
             data = self.query(query)
         except ApiException as e:
             # kind of special status for not found via Error response
             if e.message == "pod_not_found":
                 return WorkspaceStatus(WorkspacePhase.NOT_FOUND, None)
-            else:
-                raise e
+            raise e
 
         status = data[what]
 
         # Todo: there is no phase field in response but:
         #  {'PodStatus': {'is_ready': True, 'ssh_address': {'address': '192.168.1.14', 'port': 30734}}}
         #  hence status is only ready or unknown now, phases need to be aligned with server
-        phase = WorkspacePhase("ready") if status.get("is_ready", False) else WorkspacePhase("unknown")
-        ssh_address = SshAddress(status["ssh_address"]["address"], int(status["ssh_address"]["port"])) \
-            if status.get("ssh_address", None) else None
+        phase = (
+            WorkspacePhase("ready")
+            if status.get("is_ready", False)
+            else WorkspacePhase("unknown")
+        )
+        ssh_address = (
+            SshAddress(
+                status["ssh_address"]["address"], int(status["ssh_address"]["port"])
+            )
+            if status.get("ssh_address", None)
+            else None
+        )
         return WorkspaceStatus(phase, ssh_address)
-
 
     def pod_start(self) -> WorkspaceStatus:
         """Start a workspace."""
         return self._query_pod("PodStart")
 
-
     def pod_status(self) -> WorkspaceStatus:
         """Get the current status of a workspace."""
         return self._query_pod("PodStatus")
-
 
     def pod_stop(self) -> None:
         """Stop a workspace."""
@@ -285,9 +297,11 @@ def current_username() -> str:
     """Get the current username from the OS."""
     return getpass.getuser()
 
+
 @dataclass(frozen=True)
 class Args:
     """Parsed command line arguments."""
+
     command: str
     user: Optional[str]
     ssh_key_path: Optional[str]
@@ -326,9 +340,15 @@ def run() -> None:
     """Run the CLI."""
 
     parser = arg_parser()
-    ns = parser.parse_args()
-    assert isinstance(ns.subcommand, str)
-    args = Args(ns.subcommand, ns.user, ns.ssh_key_path, ns.api, ns.config)
+    namespace = parser.parse_args()
+    assert isinstance(namespace.subcommand, str)
+    args = Args(
+        namespace.subcommand,
+        namespace.user,
+        namespace.ssh_key_path,
+        namespace.api,
+        namespace.config,
+    )
 
     file = ConfigFile.load(not args.api_url, custom_path=args.config_path)
 
