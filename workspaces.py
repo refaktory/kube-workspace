@@ -21,8 +21,8 @@ from enum import Enum
 AnyDict = Dict[str, Any]
 
 
-class ApiException(Exception):
-    """Exception from API error"""
+class ApiError(Exception):
+    """Error response from API"""
 
     def __init__(self, message: str):
         self.message = message
@@ -187,7 +187,7 @@ class Api:
             return data
         if "Error" in res_data:
             msg = res_data["Error"]["message"]
-            raise ApiException(msg)
+            raise ApiError(msg)
         raise Exception("Invalid API response")
 
     def _query_pod(self, what: str) -> WorkspaceStatus:
@@ -197,24 +197,10 @@ class Api:
                 "ssh_public_key": self.config.ssh_key,
             },
         }
-        try:
-            data = self.query(query)
-        except ApiException as e:
-            # kind of special status for not found via Error response
-            if e.message == "pod_not_found":
-                return WorkspaceStatus(WorkspacePhase.NOT_FOUND, None)
-            raise e
+        data = self.query(query)
 
         status = data[what]
-
-        # Todo: there is no phase field in response but:
-        #  {'PodStatus': {'is_ready': True, 'ssh_address': {'address': '192.168.1.14', 'port': 30734}}}
-        #  hence status is only ready or unknown now, phases need to be aligned with server
-        phase = (
-            WorkspacePhase("ready")
-            if status.get("is_ready", False)
-            else WorkspacePhase("unknown")
-        )
+        phase = WorkspacePhase(status.get("phase", "unknown"))
         ssh_address = (
             SshAddress(
                 status["ssh_address"]["address"], int(status["ssh_address"]["port"])
