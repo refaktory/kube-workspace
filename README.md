@@ -30,3 +30,15 @@ The server configuration must specify a whitelist of user/public key pairs.
 
 The public key is used as an API token.
 Access to workspaces is only possible via SSH with the private key.
+
+## Contributing
+
+If you use `nix` with flakes, you can run `nix develop` to get a development
+shell with all required dependencies.
+
+Helper commands:
+
+* `cargo xtask fmt` - Format all code (`cargo fmt` for Rust, `black` for CLI) 
+* `cargo xtask lint` - Check and lint all code
+* `cargo xtask docker-build` - Build Docker image
+* `cargo xtask docker-publish` - Build Docker image and publish to image registry

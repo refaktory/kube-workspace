@@ -10,7 +10,6 @@
   outputs = { self, nixpkgs, flakeutils, naersk }: 
     flakeutils.lib.eachDefaultSystem (system:
       let
-        system = "x86_64-linux";
         pkgs = nixpkgs.legacyPackages."${system}";
         naersk-lib = naersk.lib."${system}";
       in rec {
@@ -29,6 +28,24 @@
           runtimeDependencies = with pkgs; [
             openssl
           ];
+        };
+
+        # Operator Docker image.
+        # To build, run `nix build .#dockerImage`.
+        # This will put the image into `./result`, which can then be 
+        # loaded into the Docker daemon with `docker load < ./result`.
+        packages.dockerImage = pkgs.dockerTools.buildImage {
+          name = "theduke/kube-workspace-operator";
+          tag = "${packages.kube-workspace-operator.version}";
+          config = {
+            Cmd = [ "${packages.kube-workspace-operator}/bin/kube-workspace-operator" ];
+            ExposedPorts = {
+              "8080/tcp" = {};
+            };
+            Volumes = {
+              "/config" = {};
+            };
+          };
         };
 
         defaultPackage = packages.kube-workspace-operator;
@@ -84,19 +101,6 @@
             RUST_LOG = "kube_workspace_operator=trace";
         };
 
-        dockerImage = pkgs.dockerTools.buildImage {
-          name = "theduke/kube-workspace-operator";
-          tag = "${packages.kube-workspace-operator.version}";
-          config = {
-            Cmd = [ "${packages.kube-workspace-operator}/bin/kube-workspace-operator" ];
-            ExposedPorts = {
-              "8080/tcp" = {};
-            };
-            Volumes = {
-              "/config" = {};
-            };
-          };
-        };
       }
     );
 }  
