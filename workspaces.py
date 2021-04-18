@@ -298,8 +298,8 @@ class Args:
     config_path: Optional[str]
 
 
-def parse_args() -> Args:
-    """Parse CLI arguments with argparse."""
+def arg_parser() -> argparse.ArgumentParser:
+    """Create argparser for CLI arguments."""
 
     parser = argparse.ArgumentParser(description="Kubernetes workspace manager")
     parser.add_argument(
@@ -322,15 +322,17 @@ def parse_args() -> Args:
     subs.add_parser("start", help="Start your workspace container.")
     subs.add_parser("stop", help="Stop your workspace container.")
 
-    args = parser.parse_args()
-    assert isinstance(args.subcommand, str)
-    return Args(args.subcommand, args.user, args.ssh_key_path,args.api,args.config)
+    return parser
 
 
 def run() -> None:
     """Run the CLI."""
 
-    args = parse_args()
+    parser = arg_parser()
+    ns = parser.parse_args()
+    assert isinstance(ns.subcommand, str)
+    args = Args(ns.subcommand, ns.user, ns.ssh_key_path, ns.api, ns.config)
+
     file = ConfigFile.load(not args.api_url, custom_path=args.config_path)
 
     user = args.user or file.username or current_username()
