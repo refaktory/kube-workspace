@@ -13,29 +13,21 @@ import sys
 import json
 import urllib.request
 import time
-from typing import Any, Dict, Optional, TypedDict
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 from enum import Enum
 
 AnyDict = Dict[str, Any]
 
 # CLI config file.
+@dataclass(frozen=True)
 class ConfigFile:
     """Parsed config file settings."""
 
     username: Optional[str]
     ssh_key_path: Optional[str]
     api_url: Optional[str]
-
-    def __init__(
-        self,
-        user: Optional[str],
-        ssh_key_path: Optional[str],
-        api_url: Optional[str],
-    ):
-        self.username = user
-        self.ssh_key_path = ssh_key_path
-        self.api_url = api_url
 
     @staticmethod
     def user_path() -> str:
@@ -90,14 +82,14 @@ class ConfigFile:
                     else:
                         break
 
-        config = ConfigFile(user=user, ssh_key_path=ssh_path, api_url=url)
+        config = ConfigFile(username=user, ssh_key_path=ssh_path, api_url=url)
 
         path = ConfigFile.user_path()
         config_dir = os.path.dirname(path)
         if not os.path.isdir(config_dir):
             os.makedirs(config_dir)
         with open(path, mode="w") as f:
-            json.dump(config.__dict__, f)
+            json.dump(asdict(config), f)
         print(f"Config written to {path}")
         return config
 
@@ -118,7 +110,7 @@ class ConfigFile:
             if not data:
                 return ConfigFile(None, None, None)
             return ConfigFile(
-                user=data["username"],
+                username=data["username"],
                 ssh_key_path=data["ssh_key_path"],
                 api_url=data["api_url"],
             )
@@ -127,21 +119,21 @@ class ConfigFile:
         return ConfigFile(None, None, None)
 
 
+@dataclass(frozen=True)
 class Config:
     """Materialized CLI config."""
-    def __init__(self, username: str, ssh_key: str, api_url: str):
-        self.username = username
-        self.ssh_key = ssh_key
-        self.api_url = api_url
+    username: str
+    ssh_key: str
+    api_url: str
 
     def api_endpoint(self) -> str:
         """Compute query endpoint."""
         return self.api_url + "/api/query"
 
 
-class SshAddress(TypedDict):
+@dataclass(frozen=True)
+class SshAddress:
     """API type for an ssh address and port."""
-
     address: str
     port: int
 
@@ -154,9 +146,9 @@ class WorkspacePhase(Enum):
     UNKNOWN = "unknown"
 
 
-class WorkspaceStatus(TypedDict):
+@dataclass(frozen=True)
+class WorkspaceStatus:
     """Api response for the PodStart and WorkspaceStatus query."""
-
     phase: WorkspacePhase
     ssh_address: Optional[SshAddress]
 
@@ -164,8 +156,6 @@ class WorkspaceStatus(TypedDict):
 # API CLient.
 class Api:
     """API Client."""
-
-    config: Config
 
     def __init__(self, config: Config):
         self.config = config
@@ -203,15 +193,14 @@ class Api:
             }
         )
         status = data["PodStart"]
-        return {
-            "phase": WorkspacePhase(status["phase"]),
-            "ssh_address": {
-                "port": status["ssh_address"]["port"],
-                "address": status["ssh_address"]["address"],
-            }
-            if status["ssh_address"]
-            else None,
-        }
+        # Todo: there is no phase field in response but:
+        #  {'PodStatus': {'is_ready': True, 'ssh_address': {'address': '192.168.1.14', 'port': 30734}}}
+        #  hence status only ready or unknown now, needs to be aligned with server
+        phase = WorkspacePhase("ready") if status.get("is_ready", False) else WorkspacePhase("unknown")
+        ssh_address = SshAddress(status["ssh_address"]["address"], int(status["ssh_address"]["port"])) \
+            if status["ssh_address"] else None
+        return WorkspaceStatus(phase, ssh_address)
+
 
     def pod_status(self) -> WorkspaceStatus:
         """Get the current status of a workspace."""
@@ -225,15 +214,13 @@ class Api:
             }
         )
         status = data["PodStatus"]
-        return {
-            "phase": WorkspacePhase(status["phase"]),
-            "ssh_address": {
-                "port": status["ssh_address"]["port"],
-                "address": status["ssh_address"]["address"],
-            }
-            if status["ssh_address"]
-            else None,
-        }
+        # Todo: there is no phase field in response but:
+        #  {'PodStatus': {'is_ready': True, 'ssh_address': {'address': '192.168.1.14', 'port': 30734}}}
+        #  hence status only ready or unknown now, needs to be aligned with server
+        phase = WorkspacePhase("ready") if status.get("is_ready", False) else WorkspacePhase("unknown")
+        ssh_address = SshAddress(status["ssh_address"]["address"], int(status["ssh_address"]["port"])) \
+            if status["ssh_address"] else None
+        return WorkspaceStatus(phase, ssh_address)
 
     def pod_stop(self) -> None:
         """Stop a workspace."""
@@ -255,11 +242,11 @@ def run_start(api: Api) -> None:
     )
 
     status = api.pod_status()
-    ssh = status["ssh_address"]
-    if status["phase"] == WorkspacePhase.READY and isinstance(ssh, dict):
+    ssh = status.ssh_address
+    if status.phase == WorkspacePhase.READY and ssh:
         print("Your workspace is already running!")
-        port = ssh["port"]
-        addr = ssh["address"]
+        port = ssh.port
+        addr = ssh.address
         print(f"Connect via ssh -p {port} {user_prefix}{addr}")
         return
 
@@ -267,18 +254,17 @@ def run_start(api: Api) -> None:
     print("This might take a few minutes. Please be patient.")
     while True:
         res = api.pod_start()
-        if res["phase"] == WorkspacePhase.READY:
+        if res.phase == WorkspacePhase.READY:
             break
         print("*", end="", flush=True)
         time.sleep(2)
 
     print("\nPod is ready!")
 
-    assert isinstance(res["ssh_address"], dict)
-    ssh = res["ssh_address"]
+    ssh = res.ssh_address
     if ssh:
-        port = ssh["port"]
-        addr = ssh["address"]
+        port = ssh.port
+        addr = ssh.address
         print(f"Connect via ssh -p {port} {user_prefix}{addr}")
     else:
         print("SSH not ready yet - call `start` again")
@@ -288,7 +274,7 @@ def run_stop(api: Api) -> None:
     """Run the `stop` command."""
 
     status = api.pod_status()
-    if status["phase"] == WorkspacePhase.NOT_FOUND:
+    if status.phase == WorkspacePhase.NOT_FOUND:
         print("Your workspace is already stopped")
         return
 
@@ -296,7 +282,7 @@ def run_stop(api: Api) -> None:
     api.pod_stop()
     while True:
         res = api.pod_status()
-        if res["phase"] == WorkspacePhase.NOT_FOUND:
+        if res.phase == WorkspacePhase.NOT_FOUND:
             break
         print("*", end="")
         time.sleep(2)
@@ -308,10 +294,9 @@ def current_username() -> str:
     """Get the current username from the OS."""
     return getpass.getuser()
 
-
-class Args(TypedDict):
+@dataclass(frozen=True)
+class Args:
     """Parsed command line arguments."""
-
     command: str
     user: Optional[str]
     ssh_key_path: Optional[str]
@@ -345,23 +330,17 @@ def parse_args() -> Args:
 
     args = parser.parse_args()
     assert isinstance(args.subcommand, str)
-    return {
-        "command": args.subcommand,
-        "user": args.user,
-        "ssh_key_path": args.ssh_key_path,
-        "api_url": args.api,
-        "config_path": args.config,
-    }
+    return Args(args.subcommand, args.user, args.ssh_key_path,args.api,args.config)
 
 
 def run() -> None:
     """Run the CLI."""
 
     args = parse_args()
-    file = ConfigFile.load(not args["api_url"], custom_path=args["config_path"])
+    file = ConfigFile.load(not args.api_url, custom_path=args.config_path)
 
-    user = args["user"] or file.username or current_username()
-    ssh_key_path = args["ssh_key_path"] or file.ssh_key_path
+    user = args.user or file.username or current_username()
+    ssh_key_path = args.ssh_key_path or file.ssh_key_path
     if not ssh_key_path:
         ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
 
@@ -375,7 +354,7 @@ def run() -> None:
         print("Configure key in config or with --ssh-key-path=PATH")
         sys.exit(1)
 
-    url = args["api_url"] or file.api_url
+    url = args.api_url or file.api_url
     if not url:
         print(
             "Error: Could not determine API endpoint: specify in config or with --api=http://..."
@@ -389,10 +368,9 @@ def run() -> None:
     )
     api = Api(config)
 
-    cmd = args["command"]
-    if cmd == "start":
+    if args.command == "start":
         run_start(api)
-    elif cmd == "stop":
+    elif args.command == "stop":
         run_stop(api)
     else:
         raise Exception("Invalid subcommand")
