@@ -1,0 +1,41 @@
+---
+name: Checks
+
+# Documentation:
+# https://help.github.com/en/articles/workflow-syntax-for-github-actions
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: Build and Test Rust crate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: cargo test
+        run: "cargo test"
+      
+      - name: lint - cargo clippy
+        run: "RUSTFLAGS=\"-D warnings\" cargo clippy"
+  
+  cli:
+    name: Lint the CLI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+      - name: Setup
+        run: pip install black pylint mypy 
+      
+      - name: Mypy
+        run: mypy --strict workspaces.py
+      - name: black (formatting)
+        run: black --check workspaces.py
+      - name: pylint
+        run: pylint workspaces.py
