@@ -29,25 +29,12 @@ jobs:
       - name: rustc info
         run: "rustup run $RUST_VERSION rustc --version && rustup run stable cargo --version"
       
-      - name: cargo test
-        run: "rustup run stable cargo test"
+      - name: Operator
+        run: "rustup run stable cargo xtask ci-rust"
 
-      - name: lint - cargo clippy
-        run: "RUSTFLAGS=\"-D warnings\" rustup run $RUST_VERSION cargo clippy"
 
-  cli:
-    name: CLI
-    runs-on: ubuntu-latest
+      - name: Install Python dependencies
+        run: "pip install black pylint mypy"
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-      - name: Setup
-        run: pip install black pylint mypy 
-      
-      - name: "Lint: mypy"
-        run: mypy --strict workspaces.py
-      - name: "Lint: black (formatting)"
-        run: black --check workspaces.py
-      - name: "Lint: pylint"
-        run: pylint workspaces.py
+      - name: CLI
+        run: "rustup run stable cargo xtask ci-cli"

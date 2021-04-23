@@ -1,20 +1,36 @@
 type DynError = Box<dyn std::error::Error>;
 
 /// Run a command and return `Err` on non-zero status codes.
-fn run(cmd: &str, args: &[&str]) -> Result<(), DynError> {
+fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynError> {
     eprintln!("Running '{} {}'", cmd, args.join(" "));
-    let status = std::process::Command::new(cmd).args(args).status()?;
+    let mut c = std::process::Command::new(cmd);
+
+    c.args(args);
+    // Set env vars.
+    for (key, value) in env {
+        c.env(key, value);
+    }
+
+    let status = c.status()?;
     if status.success() {
+        eprintln!("\n");
         Ok(())
     } else {
         Err(format!("{} failed with status: {}", cmd, status))?
     }
 }
 
+/// Run a command with env vars and return `Err` on non-zero status codes.
+fn run(cmd: &str, args: &[&str]) -> Result<(), DynError> {
+    run_env(cmd, args, &[])
+}
+
 fn lint_rust() -> Result<(), DynError> {
-    run("cargo", &["check"])?;
-    run("cargo", &["clippy"])?;
-    run("cargo", &["fmt", "--", "--check"])
+    // Run clippy with warnings set to deny.
+    let a = run("cargo", &["clippy", "--", "-D", "warnings"]);
+    // rustfmt check.
+    let b = run("cargo", &["fmt", "--", "--check"]);
+    a.and(b)
 }
 
 fn test_rust() -> Result<(), DynError> {
@@ -22,9 +38,9 @@ fn test_rust() -> Result<(), DynError> {
 }
 
 fn lint_cli() -> Result<(), DynError> {
-    run("mypy", &["--strict", "workspaces.py"])?;
-    run("pylint", &["workspaces.py"])?;
-    run("black", &["--check", "workspaces.py"])
+    run("mypy", &["--strict", "./cli"])?;
+    run("pylint", &["cli/kworkspaces", "cli/setup.py"])?;
+    run("black", &["--check", "cli/kworkspaces"])
 }
 
 fn lint() -> Result<(), DynError> {
@@ -77,6 +93,7 @@ fn docker_image_build() -> Result<String, DynError> {
     Ok(name.to_string())
 }
 
+/// Publish a previously built docker image.
 fn docker_image_publish() -> Result<(), DynError> {
     let name = docker_image_build()?;
     eprintln!("Image built. Publishing {}", name);
@@ -84,9 +101,22 @@ fn docker_image_publish() -> Result<(), DynError> {
     Ok(())
 }
 
+/// Run CI checks for the operator.
+fn ci_rust() -> Result<(), DynError> {
+    let b = test_rust();
+    let a = lint_rust();
+    a.and(b)
+}
+
+/// Run CI checks for CLI.
+fn ci_cli() -> Result<(), DynError> {
+    lint_cli()
+}
+
+/// Run all CI checks for both operator and cli.
 fn ci() -> Result<(), DynError> {
-    let a = lint();
-    let b = test();
+    let b = ci_rust();
+    let a = ci_cli();
     a.and(b)
 }
 
@@ -99,8 +129,12 @@ fn main() -> Result<(), DynError> {
         ["lint-rust"] => lint_rust(),
         ["lint-cli"] => lint_cli(),
         ["lint"] => lint(),
+        ["test-rust"] => test_rust(),
+        ["test"] => test(),
         ["docker-build"] => docker_image_build().map(|_| ()),
         ["docker-publish"] => docker_image_publish(),
+        ["ci-rust"] => ci_rust(),
+        ["ci-cli"] => ci_cli(),
         ["ci"] => ci(),
         other => Err(format!("Unknown arguments: {:?}", other))?,
     }
