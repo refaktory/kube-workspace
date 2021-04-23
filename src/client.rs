@@ -25,7 +25,7 @@ impl Client {
         match res {
             Ok(n) => Ok(Some(n)),
             Err(kube::Error::Api(ref err)) if err.code == 404 => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 
