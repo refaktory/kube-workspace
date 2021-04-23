@@ -12,8 +12,10 @@
       let
         pkgs = nixpkgs.legacyPackages."${system}";
         naersk-lib = naersk.lib."${system}";
+        pypkgs = pkgs.python38Packages;
       in rec {
 
+        # Operator (server)
         packages.kube-workspace-operator = naersk-lib.buildPackage {
           pname = "kube-workspace-operator";
           src = self;
@@ -28,6 +30,22 @@
           runtimeDependencies = with pkgs; [
             openssl
           ];
+        };
+
+        # CLI
+        packages.kube-workspace-cli = pypkgs.buildPythonPackage {
+          pname = "kworkspaces";
+          version = "0.1.0";
+          src = ./cli;
+
+          postShellHook = ''
+            mv $out/bin/kworkspaces.py $out/bin/kworkspaces
+          '';
+
+          meta = {
+            homepage = "https://github.com/theduke/kube-workspaces";
+            description = "CLI for kube-workspaces";
+          };
         };
 
         # Operator Docker image.
@@ -53,6 +71,11 @@
         apps.kube-workspace-operator = flakeutils.lib.mkApp {
           drv = packages.kube-workspace-operator;
         };
+
+        apps.cli = flakeutils.lib.mkApp {
+          drv = packages.kube-workspace-cli;
+        };
+
         defaultApp = apps.kube-workspace-operator;
 
         devShell = pkgs.stdenv.mkDerivation {
@@ -66,7 +89,7 @@
               # Python type checker.
               mypy
               # Python linter.
-              python38Packages.pylint
+              pypkgs.pylint
 
               # kind (Kubernetes in Docker) for integration tests.
               # Custom package because no official one exists in nixpks.
