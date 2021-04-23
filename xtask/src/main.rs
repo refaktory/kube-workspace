@@ -13,7 +13,12 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), DynError> {
 
 fn lint_rust() -> Result<(), DynError> {
     run("cargo", &["check"])?;
+    run("cargo", &["clippy"])?;
     run("cargo", &["fmt", "--", "--check"])
+}
+
+fn test_rust() -> Result<(), DynError> {
+    run("cargo", &["test", "--all-features"])
 }
 
 fn lint_cli() -> Result<(), DynError> {
@@ -23,8 +28,13 @@ fn lint_cli() -> Result<(), DynError> {
 }
 
 fn lint() -> Result<(), DynError> {
-    lint_rust()?;
-    lint_cli()
+    let a = lint_rust();
+    let b = lint_cli();
+    a.and(b)
+}
+
+fn test() -> Result<(), DynError> {
+    test_rust()
 }
 
 fn format() -> Result<(), DynError> {
@@ -74,6 +84,12 @@ fn docker_image_publish() -> Result<(), DynError> {
     Ok(())
 }
 
+fn ci() -> Result<(), DynError> {
+    let a = lint();
+    let b = test();
+    a.and(b)
+}
+
 fn main() -> Result<(), DynError> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let args_str: Vec<_> = args.iter().map(|x| x.as_str()).collect();
@@ -85,6 +101,7 @@ fn main() -> Result<(), DynError> {
         ["lint"] => lint(),
         ["docker-build"] => docker_image_build().map(|_| ()),
         ["docker-publish"] => docker_image_publish(),
+        ["ci"] => ci(),
         other => Err(format!("Unknown arguments: {:?}", other))?,
     }
 }
