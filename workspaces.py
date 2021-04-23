@@ -52,7 +52,9 @@ class ConfigFile:
         if os.path.isfile(default_ssh_key_path):
             print("Default SSH key detected at " + default_ssh_key_path)
             while True:
-                ssh_path = input("Alternative key (leave empty to use default): ").strip()
+                ssh_path = input(
+                    "Alternative key (leave empty to use default): "
+                ).strip()
                 if ssh_path:
                     if not os.path.isfile(ssh_path):
                         print("Path is not valid")
@@ -106,7 +108,6 @@ class ConfigFile:
         print(f"Config written to {path}")
         return config
 
-
     @staticmethod
     def load(auto_initialize: bool, custom_path: Optional[str] = None) -> ConfigFile:
         """Load config from disk.
@@ -154,6 +155,7 @@ class SshAddress:
 
 class WorkspacePhase(Enum):
     """Enum of server side WorkspacePhase"""
+
     NOT_FOUND = "not_found"
     STARTING = "starting"
     READY = "ready"
