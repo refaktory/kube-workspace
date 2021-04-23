@@ -10,21 +10,31 @@ on:
 
 jobs:
   rust:
-    name: Build and Test Rust crate
+    strategy:
+      matrix:
+        rust: [stable, nightly]
     runs-on: ubuntu-latest
+    env:
+      RUST_VERSION: ${{ matrix.rust }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
 
-      - name: cargo test
-        run: "cargo test"
+      - name: Set up rustup
+        run: "rustup default $RUST_VERSION && rustup component add clippy"
+
+      - name: rustc info
+        run: "rustup run $RUST_VERSION rustc --version && rustup run stable cargo --version"
       
+      - name: cargo test
+        run: "rustup run stable cargo test"
+
       - name: lint - cargo clippy
-        run: "RUSTFLAGS=\"-D warnings\" cargo clippy"
-  
+        run: "RUSTFLAGS=\"-D warnings\" rustup run $RUST_VERSION cargo clippy"
+
   cli:
-    name: Lint the CLI
+    name: CLI
     runs-on: ubuntu-latest
 
     steps:
@@ -33,9 +43,9 @@ jobs:
       - name: Setup
         run: pip install black pylint mypy 
       
-      - name: Mypy
+      - name: "Lint: mypy"
         run: mypy --strict workspaces.py
-      - name: black (formatting)
+      - name: "Lint: black (formatting)"
         run: black --check workspaces.py
-      - name: pylint
+      - name: "Lint: pylint"
         run: pylint workspaces.py
