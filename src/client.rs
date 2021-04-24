@@ -1,13 +1,22 @@
 //! Kubernetes API client wrapper.
 
-use k8s_openapi::api::core::v1::{Namespace, Node, PersistentVolumeClaim, Pod, Service};
-use kube::{api::DeleteParams, Api};
+use anyhow::{anyhow, Context};
+use k8s_openapi::{
+    api::core::v1::{Namespace, Node, PersistentVolumeClaim, Pod, Service},
+    apimachinery::pkg::api::resource::Quantity,
+};
+use kube::{
+    api::{AttachParams, DeleteParams, ListParams, ObjectList, ObjectMeta, Patch, PatchParams},
+    Api,
+};
+
+use crate::AnyError;
 
 /// Kubernetes API client.
 /// A convenience wrapper around the API provided by the `kube` crate to make
 /// usage easier.
 ///
-/// All Kubernetes API acces goes through this client.
+/// All Kubernetes API access goes through this client.
 #[derive(Clone)]
 pub struct Client {
     kube: kube::Client,
@@ -85,6 +94,95 @@ impl Client {
             .await
     }
 
+    // pub async fn pod_metrics(
+    //     &self,
+    //     namespace: &str,
+    //     pod_name: &str,
+    // ) -> Result<PodMetrics, kube::Error> {
+    //     Api::<PodMetrics>::namespaced(self.kube.clone(), namespace)
+    //         .get(pod_name)
+    //         .await
+    // }
+
+    /// Paginated pod metrics.
+    pub async fn pod_metrics_list(
+        &self,
+        namespace: &str,
+        cursor: Option<String>,
+    ) -> Result<ObjectList<PodMetrics>, kube::Error> {
+        Api::<PodMetrics>::namespaced(self.kube.clone(), namespace)
+            .list(&ListParams {
+                limit: Some(500),
+                continue_token: cursor,
+                ..Default::default()
+            })
+            .await
+    }
+
+    /// All pod metrics for a namespace.
+    pub async fn pod_metrics_list_all(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<PodMetrics>, kube::Error> {
+        let mut cursor = None;
+        let mut metrics = Vec::new();
+        loop {
+            let list = self.pod_metrics_list(namespace, cursor).await?;
+            metrics.extend(list.items);
+            cursor = list.metadata.continue_;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(metrics)
+    }
+
+    // Get paginated pods from a namespace.
+    // pub async fn pods(
+    //     &self,
+    //     namespace: &str,
+    //     label_selector: Option<(String, String)>,
+    //     cursor: Option<String>,
+    // ) -> Result<kube::api::ObjectList<Pod>, kube::Error> {
+    //     let sel = label_selector.map(|(key, value)| format!("{}={}", key, value));
+    //     let params = kube::api::ListParams {
+    //         label_selector: sel,
+    //         limit: Some(100),
+    //         continue_token: cursor,
+    //         ..Default::default()
+    //     };
+    //     Api::<Pod>::namespaced(self.kube.clone(), namespace)
+    //         .list(&params)
+    //         .await
+    // }
+
+    /// Get all pods from a namespace.
+    pub async fn pods_all(
+        &self,
+        namespace: &str,
+        label_selector: Option<(String, String)>,
+    ) -> Result<Vec<Pod>, kube::Error> {
+        let sel = label_selector.map(|(key, value)| format!("{}={}", key, value));
+        let mut pods = Vec::new();
+        let api = Api::<Pod>::namespaced(self.kube.clone(), namespace);
+        let mut params = kube::api::ListParams {
+            label_selector: sel.clone(),
+            limit: Some(500),
+            continue_token: None,
+            ..Default::default()
+        };
+
+        loop {
+            let list = api.list(&params).await?;
+            pods.extend(list.items);
+            if list.metadata.continue_.is_none() {
+                break;
+            }
+            params.continue_token = list.metadata.continue_;
+        }
+        Ok(pods)
+    }
+
     /// Get a `Pod`.
     /// Fails if not found.
     pub async fn pod(&self, namespace: &str, name: &str) -> Result<Pod, kube::Error> {
@@ -116,6 +214,19 @@ impl Client {
             .await
     }
 
+    /// Patch a pod.
+    pub async fn pod_patch(
+        &self,
+        namespace: &str,
+        pod_name: &str,
+        patch: &Patch<Pod>,
+        params: &PatchParams,
+    ) -> Result<Pod, kube::Error> {
+        Api::<Pod>::namespaced(self.kube.clone(), namespace)
+            .patch(pod_name, params, patch)
+            .await
+    }
+
     /// Delete a `Pod`.
     pub async fn pod_delete(&self, namespace: &str, name: &str) -> Result<(), kube::Error> {
         Api::<Pod>::namespaced(self.kube.clone(), namespace)
@@ -127,6 +238,39 @@ impl Client {
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn pod_exec_stdout(
+        &self,
+        namespace: &str,
+        pod: &str,
+        container: &str,
+        command: Vec<&str>,
+    ) -> Result<String, AnyError> {
+        use tokio::io::AsyncReadExt;
+
+        let params = AttachParams {
+            container: Some(container.to_string()),
+            stdout: true,
+            ..Default::default()
+        };
+        let mut proc = Api::<Pod>::namespaced(self.kube.clone(), namespace)
+            .exec(pod, command, &params)
+            .await?;
+
+        let mut stdout = String::with_capacity(1000);
+        proc.stdout()
+            .ok_or_else(|| anyhow!("Stout not attached"))?
+            .read_to_string(&mut stdout)
+            .await
+            .context("Could not read stdout")?;
+
+        let status = proc.await.ok_or_else(|| anyhow!("Pod did not terminate"))?;
+        if status.status.map(|x| x == "Success").unwrap_or(false) {
+            Ok(stdout)
+        } else {
+            Err(anyhow!("Process did not terminate successfully"))
+        }
     }
 
     /// Get a `Service`.
@@ -168,5 +312,177 @@ impl Client {
             )
             .await?;
         Ok(())
+    }
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct PodMetricsContainerUsage {
+    pub cpu: Quantity,
+    pub memory: Quantity,
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct PodMetricsContainer {
+    pub name: String,
+    pub usage: PodMetricsContainerUsage,
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct PodMetrics {
+    pub metadata: ObjectMeta,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub window: String,
+    pub containers: Vec<PodMetricsContainer>,
+}
+
+impl k8s_openapi::Resource for PodMetrics {
+    const GROUP: &'static str = "metrics.k8s.io";
+    const KIND: &'static str = "pod";
+    const VERSION: &'static str = "v1beta1";
+    const API_VERSION: &'static str = "metrics.k8s.io/v1beta1";
+}
+
+impl k8s_openapi::Metadata for PodMetrics {
+    type Ty = ObjectMeta;
+
+    fn metadata(&self) -> &Self::Ty {
+        &self.metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut Self::Ty {
+        &mut self.metadata
+    }
+}
+
+/// Parse a Kubernetes API quantity into a i64 representation.
+fn parse_quantity(q: &Quantity) -> Result<i64, AnyError> {
+    let mut number_end_index = 0;
+    let mut chars = q.0.chars().peekable();
+
+    match chars.next() {
+        None => {
+            return Err(anyhow!("Empty quantity"));
+        }
+        Some(x) => {
+            if x.is_ascii_digit() || x == '+' || x == '-' {
+                number_end_index += 1;
+            } else {
+                return Err(anyhow!("Invalid quantity"));
+            }
+        }
+    }
+    while chars.peek().map(|x| x.is_ascii_digit()).unwrap_or(false) {
+        number_end_index += 1;
+        chars.next();
+    }
+
+    let number: i64 = q.0[0..number_end_index].parse()?;
+    let suffix = &q.0[number_end_index..];
+    let mul: f64 = match suffix.to_lowercase().as_str() {
+        "n" => 0.000_000_001,
+        "m" => 0.001,
+        "" => 1.0,
+        "k" => 1_000.0,
+        "M" => 1_000_000.0,
+        "g" => 1_000_000_000.0,
+        "t" => 1_000_000_000_000.0,
+        "p" => 1_000_000_000_000_000.0,
+        other => return Err(anyhow!("Unknown suffix {}", other)),
+    };
+
+    Ok((number as f64 * mul) as i64)
+}
+
+/// Get total pod CPU usage for all containers an a pod.
+pub fn pod_metrics_total_cpu(metrics: &PodMetrics) -> Result<i64, AnyError> {
+    metrics.containers.iter().try_fold(0i64, |acc, container| {
+        parse_quantity(&container.usage.cpu).map(|x| x + acc)
+    })
+}
+
+pub fn pod_name(pod: &Pod) -> &String {
+    pod.metadata.name.as_ref().unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use k8s_openapi::api::core::v1::{Container, PodSpec};
+
+    use super::*;
+    use crate::operator::WorkspacePhase;
+
+    // #[tokio::test]
+    // async fn test_metrics() {
+    //     let client = Client::connect().await.unwrap();
+    //     let _metrics = client.pod_metrics("default", "forever").await.unwrap();
+    //     let _list = Api::<PodMetrics>::all(client.kube.clone())
+    //         .list(&Default::default())
+    //         .await
+    //         .unwrap();
+    // }
+
+    #[tokio::test]
+    async fn test_kube_exec() {
+        let c = Client::connect().await.unwrap();
+
+        // Ensure pod does not exist.
+        c.pod_delete("default", "exec-test").await.ok();
+        loop {
+            let pod = c.pod_opt("default", "exec-test").await.unwrap();
+            if pod.is_none() {
+                break;
+            }
+            eprintln!("Waiting for old pod to shut down");
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        eprintln!("Creating pod");
+        c.pod_create(
+            "default",
+            &Pod {
+                metadata: ObjectMeta {
+                    name: Some("exec-test".into()),
+                    namespace: Some("default".into()),
+                    ..Default::default()
+                },
+                spec: Some(PodSpec {
+                    containers: vec![Container {
+                        name: "main".to_string(),
+                        image: Some("debian".to_string()),
+                        command: Some(vec![
+                            "sh".to_string(),
+                            "-c".to_string(),
+                            "sleep infinity".to_string(),
+                        ]),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                status: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // wait until pod is ready.
+        loop {
+            let pod = c.pod_opt("default", "exec-test").await.unwrap();
+            if let Some(pod) = pod {
+                let phase = WorkspacePhase::from_pod(&pod);
+                if phase == WorkspacePhase::Ready {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            eprintln!("Waiting for pod to become ready");
+        }
+
+        let stdout = c
+            .pod_exec_stdout("default", "exec-test", "main", vec!["ls", "/"])
+            .await
+            .unwrap();
+        assert!(stdout.contains("tmp\n"));
+
+        c.pod_delete("default", "exec-test").await.unwrap();
     }
 }
