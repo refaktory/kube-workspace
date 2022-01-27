@@ -13,6 +13,7 @@
         pkgs = nixpkgs.legacyPackages."${system}";
         naersk-lib = naersk.lib."${system}";
         pypkgs = pkgs.python38Packages;
+        cliVersion = "0.2.0";
       in rec {
 
         # Operator (server)
@@ -35,11 +36,6 @@
 
           buildInputs = with pkgs; [
             pkgconfig
-          ];
-          propagatedBuildInputs = with pkgs; [
-            openssl
-          ];
-          runtimeDependencies = with pkgs; [
             openssl
           ];
         };
@@ -47,7 +43,7 @@
         # CLI
         packages.kube-workspace-cli = pypkgs.buildPythonPackage {
           pname = "kworkspaces";
-          # version = version;
+          version = cliVersion;
           src = ./cli;
 
           postShellHook = ''
