@@ -47,7 +47,7 @@ impl Operator {
     }
 
     pub async fn launch(config: Config) -> Result<Self, AnyError> {
-        tracing::info!("Operator startup");
+        tracing::info!("operator startup");
         let client = Client::connect().await?;
         let s = Operator { config, client };
         s.ensure_namespace().await?;
