@@ -81,7 +81,7 @@ fn lint_rust() -> Result<(), DynError> {
     let a = run("cargo", &["clippy", "--", "-D", "warnings"]);
     // rustfmt check.
     eprintln!("Running rustfmt check");
-    let b = run("cargo", &["fmt", "--", "--check"]);
+    let b = run("cargo", &["fmt", "--check"]);
     a.and(b)
 }
 
