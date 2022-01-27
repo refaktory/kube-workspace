@@ -14,6 +14,7 @@ fn main() -> Result<(), DynError> {
         ["test-rust"] => test_rust(),
         ["test"] => test(),
         ["docker-build"] => docker_image_build().map(|_| ()),
+        ["kind-install"] => kind_install(),
         ["docker-publish"] => docker_image_publish(),
         ["ci-rust"] => ci_rust(),
         ["ci-cli"] => ci_cli(),
@@ -136,9 +137,11 @@ fn format() -> Result<(), DynError> {
     run("black", &["cli"])
 }
 
+type ImageName = String;
+
 /// Build docker image and load it into the local daemon.
 /// Returns image name. (repo/image:tag)
-fn docker_image_build() -> Result<String, DynError> {
+fn docker_image_build() -> Result<ImageName, DynError> {
     eprintln!("Building docker image...");
     run("nix", &["build", ".#dockerImage"])?;
     eprintln!(
@@ -169,6 +172,35 @@ fn docker_image_build() -> Result<String, DynError> {
     eprintln!("Built and loaded docker image '{}'", name);
 
     Ok(name.to_string())
+}
+
+fn kind_install() -> Result<(), DynError> {
+    let image_name = docker_image_build()?;
+    Command::new("kind")
+        .arg("load")
+        .arg("docker-image")
+        .arg(&image_name)
+        .run_checked()?;
+
+    let tag = image_name
+        .split(':')
+        .nth(1)
+        .ok_or_else(|| "Could not parse image tag".to_string())?;
+
+    Command::new("helm")
+        .args([
+            "upgrade",
+            "--install",
+            "kube-workspace",
+            "./deploy/helm",
+            "--set",
+            "image.pullPolicy=Never",
+            "--set",
+            &format!("image.tag={}", tag),
+        ])
+        .run_checked()?;
+
+    Ok(())
 }
 
 /// Publish a previously built docker image.
