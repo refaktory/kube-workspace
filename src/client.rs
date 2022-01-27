@@ -382,19 +382,25 @@ fn parse_quantity(q: &Quantity) -> Result<i64, AnyError> {
 
     let number: i64 = q.0[0..number_end_index].parse()?;
     let suffix = &q.0[number_end_index..];
-    let mul: f64 = match suffix.to_lowercase().as_str() {
-        "n" => 0.000_000_001,
+    let mul: f64 = match suffix {
         "m" => 0.001,
         "" => 1.0,
         "k" => 1_000.0,
+        "Ki" => 1_024.0,
         "M" => 1_000_000.0,
-        "g" => 1_000_000_000.0,
-        "t" => 1_000_000_000_000.0,
-        "p" => 1_000_000_000_000_000.0,
+        "Mi" => 2.0f64.powi(20),
+        "G" => 1_000_000_000.0,
+        "Gi" => 2.0f64.powi(30),
+        "T" => 1_000_000_000_000.0,
+        "Ti" => 2.0f64.powi(40),
+        "P" => 1_000_000_000_000_000.0,
+        "Pi" => 2.0f64.powi(50),
+        "E" => 1_000_000_000_000_000_000.0,
+        "Ei" => 2.0f64.powi(60),
         other => return Err(anyhow!("Unknown suffix {}", other)),
     };
 
-    Ok((number as f64 * mul) as i64)
+    Ok((number as f64 * mul).ceil() as i64)
 }
 
 /// Get total pod CPU usage for all containers an a pod.
