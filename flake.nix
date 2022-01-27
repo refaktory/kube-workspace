@@ -47,7 +47,7 @@
         # CLI
         packages.kube-workspace-cli = pypkgs.buildPythonPackage {
           pname = "kworkspaces";
-          version = "0.1.0";
+          # version = version;
           src = ./cli;
 
           postShellHook = ''
