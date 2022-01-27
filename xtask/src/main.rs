@@ -27,8 +27,10 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), DynError> {
 
 fn lint_rust() -> Result<(), DynError> {
     // Run clippy with warnings set to deny.
+    eprintln!("Running CLIPPY checks");
     let a = run("cargo", &["clippy", "--", "-D", "warnings"]);
     // rustfmt check.
+    eprintln!("Running rustfmt check");
     let b = run("cargo", &["fmt", "--", "--check"]);
     a.and(b)
 }
