@@ -1,4 +1,37 @@
+use std::{path::PathBuf, process::Command};
+
 type DynError = Box<dyn std::error::Error>;
+
+fn main() -> Result<(), DynError> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let args_str: Vec<_> = args.iter().map(|x| x.as_str()).collect();
+
+    match args_str.as_slice() {
+        ["fmt"] | ["format"] => format(),
+        ["lint-rust"] => lint_rust(),
+        ["lint-cli"] => lint_cli(),
+        ["lint"] => lint(),
+        ["test-rust"] => test_rust(),
+        ["test"] => test(),
+        ["docker-build"] => docker_image_build().map(|_| ()),
+        ["docker-publish"] => docker_image_publish(),
+        ["ci-rust"] => ci_rust(),
+        ["ci-cli"] => ci_cli(),
+        ["ci"] => ci(),
+        other => Err(format!("Unknown arguments: {:?}", other))?,
+    }
+}
+
+fn root_dir() -> Result<PathBuf, DynError> {
+    std::env::var("CARGO_MANIFEST_DIR")
+        .map_err(|_| "Required env var CARGO_MANIFEST_DIR not found".into())
+        .and_then(|raw| {
+            PathBuf::from(raw)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| "Could not find root".to_string().into())
+        })
+}
 
 /// Run a command and return `Err` on non-zero status codes.
 fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynError> {
@@ -20,11 +53,28 @@ fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynErro
     }
 }
 
+trait CommandExt {
+    fn run_check(&mut self) -> Result<(), DynError>;
+}
+
+impl CommandExt for &mut std::process::Command {
+    fn run_check(&mut self) -> Result<(), DynError> {
+        let status = self.spawn()?.wait()?;
+        if !status.success() {
+            Err(format!("Command failed with exit code: {:?}", status).into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Run a command with env vars and return `Err` on non-zero status codes.
 fn run(cmd: &str, args: &[&str]) -> Result<(), DynError> {
+    std::env::set_current_dir(root_dir()?)?;
     run_env(cmd, args, &[])
 }
 
+/// Run Rust lints (rustfmt, clippy)
 fn lint_rust() -> Result<(), DynError> {
     // Run clippy with warnings set to deny.
     eprintln!("Running CLIPPY checks");
@@ -39,25 +89,47 @@ fn test_rust() -> Result<(), DynError> {
     run("cargo", &["test", "--all-features"])
 }
 
-fn lint_cli() -> Result<(), DynError> {
-    run("mypy", &["--strict", "./cli"])?;
-    run("pylint", &["cli/kworkspaces", "cli/setup.py"])?;
-    run("black", &["--check", "cli/kworkspaces"])
+fn lint_kubernetes() -> Result<(), DynError> {
+    eprintln!("Linting helm chart...");
+    Command::new("helm")
+        .arg("lint")
+        .arg(root_dir()?.join("deploy").join("helm"))
+        .arg("--strict")
+        .run_check()?;
+
+    Ok(())
 }
 
+fn lint_cli() -> Result<(), DynError> {
+    eprintln!("Linting CLI...");
+    run("mypy", &["--strict", "./cli"])?;
+    run("pylint", &["cli/kworkspace", "cli/setup.py"])?;
+    run("black", &["--check", "cli/kworkspace"])?;
+
+    eprintln!("CLI lint succeeded");
+    Ok(())
+}
+
+/// Lint Rust and Python CLI.
 fn lint() -> Result<(), DynError> {
     let a = lint_rust();
     let b = lint_cli();
-    a.and(b)
+    let c = lint_kubernetes();
+    a.and(b).and(c)?;
+
+    eprintln!("All lints succeeded");
+    Ok(())
 }
 
+/// Run tests for Rust and Python CLI.
 fn test() -> Result<(), DynError> {
     test_rust()
 }
 
+/// Format all code. (Rust + Python)
 fn format() -> Result<(), DynError> {
     run("cargo", &["fmt"])?;
-    run("black", &["workspaces.py"])
+    run("black", &["cli"])
 }
 
 /// Build docker image and load it into the local daemon.
@@ -120,24 +192,4 @@ fn ci() -> Result<(), DynError> {
     let b = ci_rust();
     let a = ci_cli();
     a.and(b)
-}
-
-fn main() -> Result<(), DynError> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    let args_str: Vec<_> = args.iter().map(|x| x.as_str()).collect();
-
-    match args_str.as_slice() {
-        ["fmt"] | ["format"] => format(),
-        ["lint-rust"] => lint_rust(),
-        ["lint-cli"] => lint_cli(),
-        ["lint"] => lint(),
-        ["test-rust"] => test_rust(),
-        ["test"] => test(),
-        ["docker-build"] => docker_image_build().map(|_| ()),
-        ["docker-publish"] => docker_image_publish(),
-        ["ci-rust"] => ci_rust(),
-        ["ci-cli"] => ci_cli(),
-        ["ci"] => ci(),
-        other => Err(format!("Unknown arguments: {:?}", other))?,
-    }
 }
