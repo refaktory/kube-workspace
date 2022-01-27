@@ -18,7 +18,19 @@
         # Operator (server)
         packages.kube-workspace-operator = naersk-lib.buildPackage {
           pname = "kube-workspace-operator";
-          src = self;
+          src = builtins.filterSource
+            # Filter out directories unrelated to the Rust crate.
+            # This avoids rebuilds when unrelated things change.
+            (path: type:
+              let
+                filename = (baseNameOf path);
+                # TODO: only filter main path, not nested paths too
+                included = !(builtins.elem filename [".github" ".gitignore" "flake.nix" "flake.lock" "cli" "deploy" "xtask" ".git"]);
+              in
+              included
+            )
+            ./.
+          ;
           root = ./.;
 
           buildInputs = with pkgs; [
