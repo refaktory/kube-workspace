@@ -8,6 +8,8 @@ mod config;
 mod operator;
 mod server;
 
+mod prometheus;
+
 pub(crate) type AnyError = anyhow::Error;
 
 fn main() {
@@ -40,6 +42,14 @@ fn main() {
     let res = rt.block_on(async move {
         // Launch the operator.
         let op = operator::Operator::launch(config.clone()).await?;
+
+        if let Some(p) = &config.prometheus_exporter {
+            tokio::spawn(prometheus::run_exporter_service(
+                op.metrics().clone(),
+                p.address,
+            ));
+        }
+
         // Run the webserver.
         server::run_server(op).await;
         Result::<_, AnyError>::Ok(())

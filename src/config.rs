@@ -9,6 +9,16 @@ use crate::AnyError;
 
 const ENV_VAR_CONFIG_PATH: &str = "KUBE_WORKSPACE_OPERATOR_CONFIG";
 
+#[derive(serde::Deserialize, Default, Debug)]
+pub struct ConfigSourcePrometheusExporter {
+    pub enabled: Option<bool>,
+    pub server_address: Option<String>,
+    /// If true, the operator will automatically register a
+    /// [prometheus-operator ServiceMontiro](https://prometheus-operator.dev/docs/operator/api/#servicemonitor)
+    /// for the workspace-monitor. (if the CRD is available in the cluster).
+    pub auto_register_operator_service_monitor: Option<bool>,
+}
+
 /// External configuration source with most values optional.
 ///
 /// Can be parsed from a config.json config file or from env vars.
@@ -17,6 +27,8 @@ pub struct ConfigSource {
     /// Server address to listen on.
     /// Eg: 0.0.0.0:8080 / 127.0.0.1:8080
     pub server_address: Option<String>,
+
+    pub prometheus_exporter: Option<ConfigSourcePrometheusExporter>,
 
     /// The namespace where user volumes and workspace pods are created.
     pub namespace: Option<String>,
@@ -46,7 +58,7 @@ impl ConfigSource {
     pub fn load_from_env() -> Result<Config, AnyError> {
         let vars: HashMap<String, String> = std::env::vars().collect();
 
-        let file_config = if let Some(path) = vars.get(ENV_VAR_CONFIG_PATH) {
+        let file_config: ConfigSource = if let Some(path) = vars.get(ENV_VAR_CONFIG_PATH) {
             tracing::trace!(path=%path, "loading config file");
             let content = std::fs::read(&path).context("Could not read config file")?;
             serde_json::from_slice(&content).context("Could not deserialize config")?
@@ -64,9 +76,11 @@ impl ConfigSource {
         let pod_template = file_config.pod_template;
         let storage_class = file_config.storage_class;
         let auto_shutdown = file_config.auto_shutdown;
+        let prometheus_exporter = file_config.prometheus_exporter;
 
         let source = Self {
             server_address,
+            prometheus_exporter,
             namespace,
             auto_create_namespace,
             users,
@@ -86,6 +100,30 @@ impl ConfigSource {
             .unwrap_or_else(|| "0.0.0.0:8080".to_string())
             .parse()
             .context("Invalid server address")?;
+
+        let prometheus_exporter = if let Some(p) = self.prometheus_exporter {
+            if p.enabled.unwrap_or(false) {
+                let address = p
+                    .server_address
+                    .unwrap_or_else(|| "0.0.0.0:9999".to_string())
+                    .parse()
+                    .context("Invalid prometheus exporter server address")?;
+                Some(ConfigPrometheusExporter {
+                    address,
+                    auto_register_operator_service_monitor: p
+                        .auto_register_operator_service_monitor
+                        .unwrap_or(true),
+                })
+            } else {
+                None
+            }
+        } else {
+            Some(ConfigPrometheusExporter {
+                address: "0.0.0.0:9999".parse().unwrap(),
+                auto_register_operator_service_monitor: true,
+            })
+        };
+
         let c = Config {
             server_address,
             namespace: self
@@ -106,6 +144,7 @@ impl ConfigSource {
                 cpu_usage: None,
                 tcp_idle: None,
             }),
+            prometheus_exporter,
         };
 
         c.validate()?;
@@ -120,6 +159,8 @@ impl ConfigSource {
 pub struct Config {
     /// Port where the API server should run.
     pub server_address: std::net::SocketAddr,
+
+    pub prometheus_exporter: Option<ConfigPrometheusExporter>,
 
     /// The namespace where user volumes and workspace pods are created.
     pub namespace: String,
@@ -140,6 +181,12 @@ pub struct Config {
     pub storage_class: Option<String>,
 
     pub auto_shutdown: AutoShutdown,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigPrometheusExporter {
+    pub address: SocketAddr,
+    pub auto_register_operator_service_monitor: bool,
 }
 
 impl Config {

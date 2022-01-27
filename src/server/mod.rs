@@ -40,7 +40,7 @@ pub async fn run_server(op: Operator) {
                 .buffer(512)
                 .rate_limit(100, std::time::Duration::from_secs(1))
                 .load_shed()
-                .timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(60))
                 .layer(tower_http::trace::TraceLayer::new_for_http())
                 .layer(axum::AddExtensionLayer::new(Server { operator: op }))
                 .into_inner(),

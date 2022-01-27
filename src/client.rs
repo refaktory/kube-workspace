@@ -3,6 +3,7 @@
 use anyhow::{anyhow, Context};
 use k8s_openapi::{
     api::core::v1::{Namespace, Node, PersistentVolumeClaim, Pod, Service},
+    apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition,
     apimachinery::pkg::api::resource::Quantity,
     NamespaceResourceScope,
 };
@@ -11,6 +12,7 @@ use kube::{
     Api,
 };
 
+use crate::prometheus::ServiceMonitor;
 use crate::AnyError;
 
 /// Kubernetes API client.
@@ -136,6 +138,54 @@ impl Client {
             }
         }
         Ok(metrics)
+    }
+
+    pub async fn prometheus_servicemonitor_opt(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<ServiceMonitor>, kube::Error> {
+        let res = Api::<ServiceMonitor>::namespaced(self.kube.clone(), namespace)
+            .get(name)
+            .await;
+        Self::api_result_opt(res)
+    }
+
+    pub async fn prometheus_servicemonitor_create(
+        &self,
+        namespace: &str,
+        mon: ServiceMonitor,
+    ) -> Result<ServiceMonitor, kube::Error> {
+        Api::<ServiceMonitor>::namespaced(self.kube.clone(), namespace)
+            .create(&Default::default(), &mon)
+            .await
+    }
+
+    // pub async fn custom_resource_dynamic_get_by_name_opt(
+    //     &self,
+    //     api_group: &str,
+    //     api_version: &str,
+    //     kind: &str,
+    //     namespace: &str,
+    //     resource_name: &str,
+    // ) -> Result<Option<DynamicObject>, kube::Error> {
+
+    //     let gvk = GroupVersionKind::gvk(api_group, api_version, kind);
+    //     let air = ApiResource::from_gvk(&gvk);
+    //     let api = Api::<DynamicObject>::namespaced_with(self.kube.clone(), namespace, &air);
+
+    //     let res = api.get(resource_name).await;
+    //     Self::api_result_opt(res)
+    // }
+
+    pub async fn custom_resource_definition_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<CustomResourceDefinition>, kube::Error> {
+        let res = Api::<CustomResourceDefinition>::all(self.kube.clone())
+            .get(name)
+            .await;
+        Self::api_result_opt(res)
     }
 
     // Get paginated pods from a namespace.

@@ -3,6 +3,8 @@
 mod autoshutdown;
 mod types;
 
+use std::{collections::BTreeMap, iter::FromIterator, sync::Arc};
+
 pub use self::types::WorkspacePhase;
 use self::types::WorkspaceStatus;
 
@@ -14,9 +16,12 @@ use k8s_openapi::{
         PersistentVolumeClaimVolumeSource, Pod, PodSpec, Probe, ResourceRequirements, Service,
         ServicePort, ServiceSpec, TCPSocketAction, Volume, VolumeMount,
     },
-    apimachinery::pkg::{api::resource::Quantity, util::intstr::IntOrString},
+    apimachinery::pkg::{
+        api::resource::Quantity, apis::meta::v1::LabelSelector, util::intstr::IntOrString,
+    },
 };
 use kube::api::ObjectMeta;
+use prometheus_client::metrics::gauge::Gauge;
 
 use crate::{
     client::{self, Client},
@@ -25,9 +30,19 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct Operator {
+pub struct Operator(Arc<State>);
+
+struct State {
     config: Config,
     client: Client,
+    metrics: OperatorMetrics,
+}
+
+#[derive(Clone, Default)]
+pub struct OperatorMetrics {
+    pub configuration_errors: Gauge,
+    pub workspace_available_count: Gauge,
+    pub workspace_unavailable_count: Gauge,
 }
 
 impl std::fmt::Debug for Operator {
@@ -50,10 +65,37 @@ impl Operator {
         )
     }
 
+    /// Get a reference to the operator's config.
+    #[inline]
+    pub fn config(&self) -> &Config {
+        &self.0.config
+    }
+
+    fn namespace(&self) -> &str {
+        &self.0.config.namespace
+    }
+
+    /// Get a reference to the operator's config.
+    #[inline]
+    fn client(&self) -> &Client {
+        &self.0.client
+    }
+
+    /// Get a reference to the operator's config.
+    #[inline]
+    pub fn metrics(&self) -> &OperatorMetrics {
+        &self.0.metrics
+    }
+
     pub async fn launch(config: Config) -> Result<Self, AnyError> {
         tracing::info!("operator startup");
         let client = Client::connect().await?;
-        let s = Operator { config, client };
+
+        let s = Operator(Arc::new(State {
+            config,
+            client,
+            metrics: OperatorMetrics::default(),
+        }));
         s.ensure_namespace().await?;
 
         // Spawn the main check loop of the operator.
@@ -63,22 +105,95 @@ impl Operator {
 
     /// Main loop of the operator that performs recurring checks.
     async fn run_loop(self) {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
-            // TODO: catch panics or exit on panic?
             if let Err(err) = self.run_checks().await {
-                tracing::error!(error = ?err, "Operator check run failed");
+                tracing::error!(?err, "pod check failed");
             }
         }
     }
 
     async fn run_checks(&self) -> Result<(), AnyError> {
+        tracing::trace!("running check job");
         // TODO: mark operator as unhealthy if namespace could not be ensured.
         self.ensure_namespace().await?;
-        if self.config.autoshutdown_enabled() {
-            self.check_pods().await?;
+        self.check_pods().await?;
+
+        if let Some(conf) = &self.config().prometheus_exporter {
+            if conf.auto_register_operator_service_monitor {
+                self.ensure_prometheus_operator_service_monitor(conf)
+                    .await?;
+            }
         }
+        Ok(())
+    }
+
+    fn default_labels() -> BTreeMap<String, String> {
+        BTreeMap::from_iter(vec![(
+            "app.kubernetes.io/managed-by".to_string(),
+            "kube-workspace-operator".to_string(),
+        )])
+    }
+
+    async fn ensure_prometheus_operator_service_monitor(
+        &self,
+        _config: &crate::config::ConfigPrometheusExporter,
+    ) -> Result<(), anyhow::Error> {
+        tracing::trace!("checking prometheus operator service monitor");
+
+        let client = self.client();
+
+        let crd_name = "servicemonitors.monitoring.coreos.com";
+        let service_monitor_name = "kube-workspace-prometheus-operator-servicemonitor";
+
+        let mon = crate::prometheus::ServiceMonitor {
+            metadata: ObjectMeta {
+                name: Some(service_monitor_name.to_string()),
+                labels: Some(Self::default_labels()),
+                ..Default::default()
+            },
+            spec: crate::prometheus::ServiceMonitorSpec {
+                join_label: None,
+                selector: LabelSelector {
+                    match_labels: Some(BTreeMap::from_iter(vec![(
+                        "app.kubernetes.io/name".to_string(),
+                        "kube-workspace-operator".to_string(),
+                    )])),
+                    match_expressions: None,
+                },
+                endpoints: vec![crate::prometheus::Endpoint {
+                    port: Some("prometheus".to_string()),
+                    path: None,
+                }],
+            },
+        };
+
+        let existing = client
+            .prometheus_servicemonitor_opt(self.namespace(), service_monitor_name)
+            .await?;
+        if let Some(_old) = existing {
+            // TODO: check if config has changed and re-apply it.
+
+            tracing::trace!("prometheus-operator ServiceMonitor already exists");
+
+            return Ok(());
+        }
+
+        // Check if CRD exists.
+        let crd = client.custom_resource_definition_by_name(crd_name).await?;
+        if crd.is_none() {
+            tracing::debug!(
+                "not creating prometheus-operator ServiceMonitor - ServiceMonitor CRD not found"
+            );
+            return Ok(());
+        }
+
+        client
+            .prometheus_servicemonitor_create(self.namespace(), mon)
+            .await
+            .context("Could not create prometheus-operator ServiceMonitor")?;
+        tracing::info!("prometheus-operator ServiceMonitor created");
         Ok(())
     }
 
@@ -88,12 +203,12 @@ impl Operator {
         let pod_label = Self::workspace_pod_label();
 
         let pods = self
-            .client
-            .pods_all(&self.config.namespace, Some(pod_label))
+            .client()
+            .pods_all(self.namespace(), Some(pod_label))
             .await?;
         let pod_metrics = self
-            .client
-            .pod_metrics_list_all(&self.config.namespace)
+            .client()
+            .pod_metrics_list_all(self.namespace())
             .await
             .unwrap_or_else(|error| {
                 // The metrics API is optional and depends on a metrics-server
@@ -109,14 +224,41 @@ impl Operator {
                 Vec::new()
             });
 
+        let mut available_count = 0;
+        let mut unavailable_count = 0;
+
         for pod in pods {
             let metrics = pod_metrics
                 .iter()
                 .find(|metrics| metrics.metadata.name == pod.metadata.name);
-            if let Err(err) = self.process_pod_autoshutdown(pod, metrics.cloned()).await {
-                tracing::error!(error=?err, "Could not process pod autoshutdown");
+
+            match WorkspacePhase::from_pod(&pod) {
+                WorkspacePhase::Starting => {
+                    unavailable_count += 1;
+                }
+                WorkspacePhase::Ready => {
+                    available_count += 1;
+                }
+                WorkspacePhase::Terminating
+                | WorkspacePhase::Unknown
+                | WorkspacePhase::NotFound => {}
+            }
+
+            if self.config().autoshutdown_enabled() {
+                if let Err(err) = self.process_pod_autoshutdown(pod, metrics.cloned()).await {
+                    tracing::error!(error=?err, "Could not process pod autoshutdown");
+                }
             }
         }
+
+        self.0
+            .metrics
+            .workspace_available_count
+            .set(available_count);
+        self.0
+            .metrics
+            .workspace_unavailable_count
+            .set(unavailable_count);
 
         Ok(())
     }
@@ -129,22 +271,22 @@ impl Operator {
         let pod_name = client::pod_name(&pod);
         let annotations = self.analyze_pod_autoshutdown(&pod, metrics_opt).await?;
 
-        if annotations.should_shutdown(&self.config.auto_shutdown) {
+        if annotations.should_shutdown(&self.config().auto_shutdown) {
             tracing::trace!(
                 ?pod,
                 ?annotations,
                 "shutting down workspace pod due to auto shutdown"
             );
-            self.client
-                .pod_delete(&self.config.namespace, client::pod_name(&pod))
+            self.client()
+                .pod_delete(self.namespace(), client::pod_name(&pod))
                 .await?;
             tracing::info!(pod=%pod_name, "Workspace pod shut down due to autoshutdown");
         } else {
             // Update annotations.
             tracing::trace!(?pod, ?annotations, "Updating pod autoshutdown annotations");
             let (patch, params) = annotations.to_patch();
-            self.client
-                .pod_patch(&self.config.namespace, pod_name, &patch, &params)
+            self.client()
+                .pod_patch(&self.config().namespace, pod_name, &patch, &params)
                 .await?;
         }
 
@@ -176,7 +318,7 @@ impl Operator {
             }
         }
 
-        let cfg = &self.config.auto_shutdown;
+        let cfg = &self.config().auto_shutdown;
         let cpu_is_idle = if let Some((cpu, metrics)) = cfg.cpu_usage.as_ref().zip(metrics_opt) {
             client::pod_metrics_total_cpu(&metrics)? > cpu.cpu_threshold as i64
         } else {
@@ -207,9 +349,9 @@ impl Operator {
 
     async fn pod_active_tcp_connections(&self, pod_name: &str) -> Result<usize, AnyError> {
         let stdout = self
-            .client
+            .client()
             .pod_exec_stdout(
-                &self.config.namespace,
+                &self.config().namespace,
                 pod_name,
                 Self::POD_MAIN_CONTAINER_NAME,
                 vec!["ss", "--tcp", "--oneline", "--no-header"],
@@ -222,17 +364,18 @@ impl Operator {
     /// ensure that the specified namespace exists.
     async fn ensure_namespace(&self) -> Result<(), AnyError> {
         // Check if namespace exists.
+        let config = self.config();
 
-        tracing::trace!("Checking namespace {}", self.config.namespace);
-        let ns = self.client.namespace_opt(&self.config.namespace).await?;
+        tracing::trace!("Checking namespace {}", config.namespace);
+        let ns = self.client().namespace_opt(&config.namespace).await?;
         if ns.is_none() {
-            if self.config.auto_create_namespace {
-                tracing::warn!(namespace=%self.config.namespace, "Namespace does not exist. Attempting to create");
+            if config.auto_create_namespace {
+                tracing::warn!(namespace=%config.namespace, "Namespace does not exist. Attempting to create");
 
-                self.client
+                self.client()
                     .namespace_create(&Namespace {
                         metadata: ObjectMeta {
-                            name: Some(self.config.namespace.clone()),
+                            name: Some(config.namespace.clone()),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -240,13 +383,13 @@ impl Operator {
                     .await
                     .context("Could not create namespace")?;
 
-                tracing::info!(namespace= %self.config.namespace,"Namespace created");
+                tracing::info!(namespace= %config.namespace,"Namespace created");
             } else {
-                tracing::error!(namespace=%self.config.namespace, "Namespace does not exist and auto-creation is not enabled. Aborting");
+                tracing::error!(namespace=%config.namespace, "Namespace does not exist and auto-creation is not enabled. Aborting");
                 return Err(anyhow::anyhow!("Bootstrap failed"));
             }
         }
-        tracing::debug!(namespace=%self.config.namespace, "namespace ready");
+        tracing::debug!(namespace=%config.namespace, "namespace ready");
         Ok(())
     }
 
@@ -262,8 +405,8 @@ impl Operator {
 
         // First, check if a pod is already running.
         let claim_opt = self
-            .client
-            .volume_claim_opt(&self.config.namespace, &claim_name)
+            .client()
+            .volume_claim_opt(&self.config().namespace, &claim_name)
             .await?;
 
         if let Some(claim) = claim_opt {
@@ -277,7 +420,7 @@ impl Operator {
         &self,
         user: &config::User,
     ) -> Result<PersistentVolumeClaim, AnyError> {
-        let ns = &self.config.namespace;
+        let ns = &self.config().namespace;
         let claim_name = Self::user_home_volume_name(user);
 
         let schema = PersistentVolumeClaim {
@@ -287,13 +430,13 @@ impl Operator {
                 ..Default::default()
             },
             spec: Some(PersistentVolumeClaimSpec {
-                storage_class_name: self.config.storage_class.clone(),
+                storage_class_name: self.config().storage_class.clone(),
                 access_modes: Some(vec!["ReadWriteOnce".to_string()]),
                 resources: Some(ResourceRequirements {
                     requests: Some(
                         vec![(
                             "storage".to_string(),
-                            Quantity(self.config.max_home_volume_size.clone()),
+                            Quantity(self.config().max_home_volume_size.clone()),
                         )]
                         .into_iter()
                         .collect(),
@@ -305,7 +448,7 @@ impl Operator {
             ..Default::default()
         };
 
-        self.client
+        self.client()
             .volume_claim_create(ns, &schema)
             .await
             .context("Could not create persistent volume for user home directory")
@@ -328,8 +471,8 @@ impl Operator {
         user: &config::User,
     ) -> Result<Option<Service>, AnyError> {
         let name = Self::user_service_name(user);
-        self.client
-            .service_opt(&self.config.namespace, &name)
+        self.client()
+            .service_opt(self.namespace(), &name)
             .await
             .map_err(Into::into)
     }
@@ -348,7 +491,7 @@ impl Operator {
         let svc = Service {
             metadata: ObjectMeta {
                 name: Some(name),
-                namespace: Some(self.config.namespace.clone()),
+                namespace: Some(self.namespace().to_string()),
                 ..Default::default()
             },
             spec: Some(ServiceSpec {
@@ -372,8 +515,8 @@ impl Operator {
             ..Default::default()
         };
 
-        self.client
-            .service_create(&self.config.namespace, &svc)
+        self.client()
+            .service_create(self.namespace(), &svc)
             .await
             .context("Could not create service for user")
     }
@@ -392,8 +535,8 @@ impl Operator {
 
     pub async fn get_user_pod_opt(&self, user: &config::User) -> Result<Option<Pod>, AnyError> {
         let pod_name = Self::user_pod_name(user);
-        self.client
-            .pod_opt(&self.config.namespace, &pod_name)
+        self.client()
+            .pod_opt(self.namespace(), &pod_name)
             .await
             .map_err(Into::into)
     }
@@ -404,7 +547,7 @@ impl Operator {
         user: &config::User,
         spec_template: &PodSpec,
     ) -> Result<Pod, AnyError> {
-        let ns = &self.config.namespace;
+        let ns = self.namespace();
         let pod_name = Self::user_pod_name(user);
 
         tracing::debug!(user=%user.username, pod_name=%pod_name, "Creating user pod");
@@ -524,7 +667,7 @@ impl Operator {
         };
 
         let pod = self
-            .client
+            .client()
             .pod_create(ns, &schema)
             .await
             .context("Could not create pod for user")?;
@@ -552,7 +695,7 @@ impl Operator {
 
         let node_name_opt = pod.spec.as_ref().and_then(|x| x.node_name.as_ref());
         let node = if let Some(name) = node_name_opt {
-            Some(self.client.node(name).await?)
+            Some(self.client().node(name).await?)
         } else {
             None
         };
@@ -575,7 +718,7 @@ impl Operator {
             (Some(service), Some(pod)) => {
                 let node =
                     if let Some(node_name) = pod.spec.as_ref().and_then(|x| x.node_name.clone()) {
-                        Some(self.client.node(&node_name).await?)
+                        Some(self.client().node(&node_name).await?)
                     } else {
                         None
                     };
@@ -598,20 +741,13 @@ impl Operator {
     pub async fn user_pod_shutdown(&self, user: &config::User) -> Result<(), AnyError> {
         let name = Self::user_pod_name(user);
         tracing::debug!(pod=%name, user=%user.username, "deleting user pod");
-        self.client
-            .pod_delete(&self.config.namespace, &name)
-            .await?;
+        self.client().pod_delete(self.namespace(), &name).await?;
         // Delete the service.
-        self.client
-            .service_delete(&self.config.namespace, &Self::user_service_name(user))
+        self.client()
+            .service_delete(self.namespace(), &Self::user_service_name(user))
             .await?;
         tracing::info!(user=%user.username, pod=%name, "user pod deleted");
         Ok(())
-    }
-
-    /// Get a reference to the operator's config.
-    pub fn config(&self) -> &Config {
-        &self.config
     }
 }
 
