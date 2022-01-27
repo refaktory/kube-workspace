@@ -92,23 +92,7 @@
               pypkgs.pylint
 
               # kind (Kubernetes in Docker) for integration tests.
-              # Custom package because no official one exists in nixpks.
-              (pkgs.stdenv.mkDerivation rec {
-                name = "kind";
-
-                executable = fetchurl {
-                  url = "https://github.com/kubernetes-sigs/kind/releases/download/v0.10.0/kind-linux-amd64";
-                  sha256 = "74767776488508d847b0bb941212c1cb76ace90d9439f4dee256d8a04f1309c6";
-                };
-
-                phases = [ "installPhase" ];
-
-                installPhase = ''
-                  mkdir -p $out/bin
-                  cp ${executable} $out/bin/kind
-                  chmod +x $out/bin/kind
-                '';
-              })
+              kind
             ];
             propagatedBuildInputs = with pkgs; [
               openssl
@@ -119,9 +103,8 @@
             # Allow `cargo run` etc to find ssl lib.
             LD_LIBRARY_PATH = "${pkgs.openssl.out}/lib";
             RUST_BACKTRACE = "1";
-            # Use lld linker for speedup.
-            RUSTFLAGS = "-C link-arg=-fuse-ld=lld";
             RUST_LOG = "kube_workspace_operator=trace";
+            KUBE_WORKSPACE_OPERATOR_CONFIG = "./deploy/config.json";
         };
 
       }
