@@ -19,7 +19,7 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     // Read config file.
-    let config = match config::Config::load_from_env() {
+    let config = match config::ConfigSource::load_from_env() {
         Ok(c) => c,
         Err(err) => {
             tracing::error!(error=?err, "Could not load config");

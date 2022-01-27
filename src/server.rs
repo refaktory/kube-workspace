@@ -6,7 +6,7 @@ use crate::operator::Operator;
 ///
 /// Blocks indefinitely.
 pub async fn run_server(op: Operator) {
-    let port = op.config().server_port.unwrap_or(8080);
+    let port = op.config().server_port;
     let routes = filters::routes(op);
     tracing::info!(port = port, "Starting http server");
     warp::serve(routes).run(([0, 0, 0, 0], port)).await
