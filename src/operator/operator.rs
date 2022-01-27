@@ -4,10 +4,9 @@ use anyhow::{anyhow, Context};
 use client::PodMetrics;
 use k8s_openapi::{
     api::core::v1::{
-        Container, ContainerPort, Namespace, Node, PersistentVolumeClaim,
-        PersistentVolumeClaimSpec, PersistentVolumeClaimVolumeSource, Pod, PodSpec, Probe,
-        ResourceRequirements, Service, ServicePort, ServiceSpec, TCPSocketAction, Volume,
-        VolumeMount,
+        Container, ContainerPort, Namespace, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+        PersistentVolumeClaimVolumeSource, Pod, PodSpec, Probe, ResourceRequirements, Service,
+        ServicePort, ServiceSpec, TCPSocketAction, Volume, VolumeMount,
     },
     apimachinery::pkg::{api::resource::Quantity, util::intstr::IntOrString},
 };
@@ -18,6 +17,8 @@ use crate::{
     config::{self, Config},
     AnyError,
 };
+
+use super::types::{WorkspacePhase, WorkspaceStatus};
 
 #[derive(Clone)]
 pub struct Operator {
@@ -36,6 +37,14 @@ impl Operator {
     const WORKSPACE_POD_LABEL: &'static str = "workspace-pod";
     const WORKSPACE_POD_LABEL_VALUE: &'static str = "true";
     const POD_MAIN_CONTAINER_NAME: &'static str = "workspace";
+
+    /// Build the pod label applied to all workspace pods.
+    pub fn workspace_pod_label() -> (String, String) {
+        (
+            Self::WORKSPACE_POD_LABEL.to_string(),
+            Self::WORKSPACE_POD_LABEL_VALUE.to_string(),
+        )
+    }
 
     pub async fn launch(config: Config) -> Result<Self, AnyError> {
         tracing::info!("Operator startup");
@@ -72,10 +81,7 @@ impl Operator {
     /// Check the currently running pods.
     /// If auto shutdown is enabled, check status and shutdown down if approrpriate.
     async fn check_pods(&self) -> Result<(), AnyError> {
-        let pod_label = (
-            Self::WORKSPACE_POD_LABEL.to_string(),
-            Self::WORKSPACE_POD_LABEL_VALUE.to_string(),
-        );
+        let pod_label = Self::workspace_pod_label();
 
         let pods = self
             .client
@@ -84,7 +90,20 @@ impl Operator {
         let pod_metrics = self
             .client
             .pod_metrics_list_all(&self.config.namespace)
-            .await?;
+            .await
+            .unwrap_or_else(|error| {
+                // The metrics API is optional and depends on a metrics-server
+                // deployment.
+                // Handle this gracefully by not propagating the error but just
+                // logging a warning.
+                // TODO: separate startup manual check for the pod metrics API
+                //  (for better error messages)
+                tracing::warn!(
+                    ?error,
+                    "could not obtain pod metrics - is the pod metrics API installed?"
+                );
+                Vec::new()
+            });
 
         for pod in pods {
             let metrics = pod_metrics
@@ -223,6 +242,7 @@ impl Operator {
                 return Err(anyhow::anyhow!("Bootstrap failed"));
             }
         }
+        tracing::debug!(namespace=%self.config.namespace, "namespace ready");
         Ok(())
     }
 
@@ -669,95 +689,4 @@ impl PodMetricsAnnotion {
 
         should_shutdown
     }
-}
-
-/// The current status phase of a user workspace.
-#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
-pub enum WorkspacePhase {
-    #[serde(rename = "not_found")]
-    NotFound,
-    #[serde(rename = "starting")]
-    Starting,
-    #[serde(rename = "ready")]
-    Ready,
-    #[serde(rename = "terminating")]
-    Terminating,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-
-impl WorkspacePhase {
-    pub fn from_pod(pod: &Pod) -> Self {
-        let phase = pod
-            .status
-            .as_ref()
-            .and_then(|s| s.phase.as_ref())
-            .map(|x| x.as_str());
-        match phase {
-            _ if pod.metadata.deletion_timestamp.is_some() => Self::Terminating,
-            Some("Pending") => Self::Starting,
-            Some("Running") if pod_containers_ready(pod) => Self::Ready,
-            Some("Running") => Self::Starting,
-            Some("Succeeded") => Self::Terminating,
-            Some("Failed") => Self::Terminating,
-            Some("Unknown") => Self::Unknown,
-            Some(other) => {
-                tracing::warn!(
-                    stauts=%other,
-                    "Internal error: unhandled pod status '{}' \
-                    - please file a bug report",
-                    other
-                );
-                Self::Unknown
-            }
-            None => Self::Unknown,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct WorkspaceStatus {
-    pub phase: WorkspacePhase,
-    pub service: Option<Service>,
-    pub pod: Option<Pod>,
-    pub node: Option<Node>,
-}
-
-impl WorkspaceStatus {
-    /// Get the public address where the pod SSH can be reached.
-    /// Can be an IP or a hostname.
-    pub fn public_address(&self) -> Option<String> {
-        self.node.as_ref().and_then(node_ip)
-    }
-
-    /// Get the SSH port for the pod.
-    pub fn ssh_port(&self) -> Option<i32> {
-        self.service.as_ref().and_then(service_get_nodeport)
-    }
-}
-
-/// Extract the NodePort of a `Service`.
-pub fn service_get_nodeport(svc: &Service) -> Option<i32> {
-    svc.spec.as_ref()?.ports.as_ref()?.first()?.node_port
-}
-
-/// Determine if all containers of a `Pod` are ready.
-/// Ready means that they are up and running and are passing the readinessCheck
-/// if one is configured.
-fn pod_containers_ready(pod: &Pod) -> bool {
-    pod.status
-        .as_ref()
-        .and_then(|x| x.container_statuses.as_ref())
-        .map(|s| s.iter().all(|x| x.ready))
-        .unwrap_or_default()
-}
-
-pub fn node_ip(node: &Node) -> Option<String> {
-    node.status
-        .as_ref()?
-        .addresses
-        .as_ref()?
-        .iter()
-        .find(|addr| addr.type_ == "InternalIP")
-        .map(|addr| addr.address.clone())
 }
