@@ -54,11 +54,11 @@ fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynErro
 }
 
 trait CommandExt {
-    fn run_check(&mut self) -> Result<(), DynError>;
+    fn run_checked(&mut self) -> Result<(), DynError>;
 }
 
 impl CommandExt for &mut std::process::Command {
-    fn run_check(&mut self) -> Result<(), DynError> {
+    fn run_checked(&mut self) -> Result<(), DynError> {
         let status = self.spawn()?.wait()?;
         if !status.success() {
             Err(format!("Command failed with exit code: {:?}", status).into())
@@ -95,7 +95,7 @@ fn lint_kubernetes() -> Result<(), DynError> {
         .arg("lint")
         .arg(root_dir()?.join("deploy").join("helm"))
         .arg("--strict")
-        .run_check()?;
+        .run_checked()?;
 
     Ok(())
 }
