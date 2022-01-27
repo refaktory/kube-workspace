@@ -43,12 +43,12 @@ See [Deploy] below for how to configure and deploy the project to  a Kubernetes 
 ### Installation:
 
 * Pip:
-  `python -m pip install -e git+https://github.com/refaktory/kube-workspaces.git#egg=version_subpkg&subdirectory=cli`
+  `python3 -m pip install -e 'git+https://github.com/refaktory/kube-workspace.git#egg=kworkspace&subdirectory=cli'`
 
 * Nix/NixOS: 
   **Flakes must be enabled**
-  Run once: `nix run github:refaktory/kube-workspaces.cli`
-  Shell: `nix shell -p github:refaktory/kube-workspaces.cli`
+  Run once: `nix run github:refaktory/kube-workspace.cli`
+  Shell: `nix shell -p github:refaktory/kube-workspace.cli`
 
 ### Commands:
 
