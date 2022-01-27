@@ -254,7 +254,7 @@ def run_start(api: Api) -> None:
     while True:
         res = api.pod_start()
         if res.phase != curent_phase:
-            print(f"{res.phase.value}->", end="")
+            print(f"\n{res.phase.value}->", end="")
             curent_phase = res.phase
         if res.phase == WorkspacePhase.READY:
             break
