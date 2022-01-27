@@ -11,5 +11,8 @@
     ],
     "pod_template": {
         "containers": []
+    },
+    "auto_shutdown": {
+      "enable": true
     }
 }
