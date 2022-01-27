@@ -508,68 +508,68 @@ mod tests {
     //         .unwrap();
     // }
 
-    #[tokio::test]
-    async fn test_kube_exec() {
-        let c = Client::connect().await.unwrap();
+    // #[tokio::test]
+    // async fn test_kube_exec() {
+    //     let c = Client::connect().await.unwrap();
 
-        // Ensure pod does not exist.
-        c.pod_delete("default", "exec-test").await.ok();
-        loop {
-            let pod = c.pod_opt("default", "exec-test").await.unwrap();
-            if pod.is_none() {
-                break;
-            }
-            eprintln!("Waiting for old pod to shut down");
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
+    //     // Ensure pod does not exist.
+    //     c.pod_delete("default", "exec-test").await.ok();
+    //     loop {
+    //         let pod = c.pod_opt("default", "exec-test").await.unwrap();
+    //         if pod.is_none() {
+    //             break;
+    //         }
+    //         eprintln!("Waiting for old pod to shut down");
+    //         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    //     }
 
-        eprintln!("Creating pod");
-        c.pod_create(
-            "default",
-            &Pod {
-                metadata: ObjectMeta {
-                    name: Some("exec-test".into()),
-                    namespace: Some("default".into()),
-                    ..Default::default()
-                },
-                spec: Some(PodSpec {
-                    containers: vec![Container {
-                        name: "main".to_string(),
-                        image: Some("debian".to_string()),
-                        command: Some(vec![
-                            "sh".to_string(),
-                            "-c".to_string(),
-                            "sleep infinity".to_string(),
-                        ]),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }),
-                status: None,
-            },
-        )
-        .await
-        .unwrap();
+    //     eprintln!("Creating pod");
+    //     c.pod_create(
+    //         "default",
+    //         &Pod {
+    //             metadata: ObjectMeta {
+    //                 name: Some("exec-test".into()),
+    //                 namespace: Some("default".into()),
+    //                 ..Default::default()
+    //             },
+    //             spec: Some(PodSpec {
+    //                 containers: vec![Container {
+    //                     name: "main".to_string(),
+    //                     image: Some("debian".to_string()),
+    //                     command: Some(vec![
+    //                         "sh".to_string(),
+    //                         "-c".to_string(),
+    //                         "sleep infinity".to_string(),
+    //                     ]),
+    //                     ..Default::default()
+    //                 }],
+    //                 ..Default::default()
+    //             }),
+    //             status: None,
+    //         },
+    //     )
+    //     .await
+    //     .unwrap();
 
-        // wait until pod is ready.
-        loop {
-            let pod = c.pod_opt("default", "exec-test").await.unwrap();
-            if let Some(pod) = pod {
-                let phase = WorkspacePhase::from_pod(&pod);
-                if phase == WorkspacePhase::Ready {
-                    break;
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            eprintln!("Waiting for pod to become ready");
-        }
+    //     // wait until pod is ready.
+    //     loop {
+    //         let pod = c.pod_opt("default", "exec-test").await.unwrap();
+    //         if let Some(pod) = pod {
+    //             let phase = WorkspacePhase::from_pod(&pod);
+    //             if phase == WorkspacePhase::Ready {
+    //                 break;
+    //             }
+    //         }
+    //         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    //         eprintln!("Waiting for pod to become ready");
+    //     }
 
-        let stdout = c
-            .pod_exec_stdout("default", "exec-test", "main", vec!["ls", "/"])
-            .await
-            .unwrap();
-        assert!(stdout.contains("tmp\n"));
+    //     let stdout = c
+    //         .pod_exec_stdout("default", "exec-test", "main", vec!["ls", "/"])
+    //         .await
+    //         .unwrap();
+    //     assert!(stdout.contains("tmp\n"));
 
-        c.pod_delete("default", "exec-test").await.unwrap();
-    }
+    //     c.pod_delete("default", "exec-test").await.unwrap();
+    // }
 }
