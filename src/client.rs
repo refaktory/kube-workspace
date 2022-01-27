@@ -440,7 +440,7 @@ mod tests {
     use k8s_openapi::api::core::v1::{Container, PodSpec};
 
     use super::*;
-    use crate::operator::types::WorkspacePhase;
+    use crate::operator::WorkspacePhase;
 
     // #[tokio::test]
     // async fn test_metrics() {

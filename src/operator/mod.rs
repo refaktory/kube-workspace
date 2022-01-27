@@ -1,5 +1,5 @@
 mod autoshutdown;
 mod operator;
-pub mod types;
+mod types;
 
-pub use operator::Operator;
+pub use self::{operator::Operator, types::WorkspacePhase};
