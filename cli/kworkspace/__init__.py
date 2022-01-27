@@ -174,25 +174,28 @@ class WorkspaceStatus:
 
 @dataclass(frozen=True)
 class WorkspaceInfo:
+    """Metadata for a running workspace (container)."""
+
     image: str
     memory_limit: Optional[str]
     cpu_limit: Optional[str]
 
-
-    def print_for_cli(self) -> str:
-        out = f'  * Image: {self.image}'
-        if self.memory_limit != None:
-            out += f'\n    Memory: {self.memory_limit}'
-        if self.cpu_limit != None:
-            out += f'\n    CPU: {self.memory_limit}'
+    def render_for_cli(self) -> str:
+        """Render for display in the terminal."""
+        out = f"  * Image: {self.image}"
+        if self.memory_limit is not None:
+            out += f"\n    Memory: {self.memory_limit}"
+        if self.cpu_limit is not None:
+            out += f"\n    CPU: {self.memory_limit}"
         return out
 
     @classmethod
-    def from_dict(cls, data: dict) -> WorkspaceInfo:
+    def from_dict(cls, data: Dict[str, Any]) -> WorkspaceInfo:
+        """Parse from a raw dictionary."""
         return cls(
-            image=data['image'],
-            memory_limit=data['memory_limit'],
-            cpu_limit=data['memory_limit'],
+            image=data["image"],
+            memory_limit=data["memory_limit"],
+            cpu_limit=data["memory_limit"],
         )
 
 
@@ -242,7 +245,7 @@ class Api:
             if status.get("ssh_address", None)
             else None
         )
-        info = WorkspaceInfo.from_dict(status['info']) if 'info' in status else None
+        info = WorkspaceInfo.from_dict(status["info"]) if "info" in status else None
         return WorkspaceStatus(phase, ssh_address, info)
 
     def pod_start(self) -> WorkspaceStatus:
@@ -272,8 +275,8 @@ def run_start(api: Api) -> None:
         port = ssh.port
         addr = ssh.address
 
-        if status.info != None:
-          print(status.info.print_for_cli())
+        if status.info:
+            print(status.info.render_for_cli())
 
         print(f"Connect via ssh -p {port} {user_prefix}{addr}")
         return
@@ -293,8 +296,8 @@ def run_start(api: Api) -> None:
 
     print("\nPod is ready!")
 
-    if res.info != None:
-        print(res.info.print_for_cli())
+    if res.info:
+        print(res.info.render_for_cli())
     ssh = res.ssh_address
     if ssh:
         port = ssh.port
