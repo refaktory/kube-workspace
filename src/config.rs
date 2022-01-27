@@ -7,7 +7,7 @@ use k8s_openapi::api::core::v1::PodSpec;
 
 use crate::AnyError;
 
-const ENV_VAR_CONFIG_PATH: &'static str = "KUBE_WORKSPACE_OPERATOR_CONFIG";
+const ENV_VAR_CONFIG_PATH: &str = "KUBE_WORKSPACE_OPERATOR_CONFIG";
 
 /// External configuration source with most values optional.
 ///
@@ -87,10 +87,12 @@ impl ConfigSource {
             namespace: self
                 .namespace
                 .map(|x| x.trim().to_string())
-                .unwrap_or("kube-workspaces".to_string()),
+                .unwrap_or_else(|| "kube-workspaces".to_string()),
             auto_create_namespace: self.auto_create_namespace.unwrap_or(true),
             users: self.users,
-            max_home_volume_size: self.max_home_volume_size.unwrap_or("10Gi".to_string()),
+            max_home_volume_size: self
+                .max_home_volume_size
+                .unwrap_or_else(|| "10Gi".to_string()),
             pod_template: self.pod_template.unwrap_or(PodSpec {
                 ..Default::default()
             }),
@@ -157,13 +159,13 @@ impl Config {
     }
 
     fn validate(&self) -> Result<(), anyhow::Error> {
-        if self.namespace.trim() != &self.namespace {
+        if self.namespace.trim() != self.namespace {
             bail!(
                 "Invalid namespace '{}': leading or trailing spaces",
                 self.namespace
             );
         }
-        if self.namespace == "" {
+        if self.namespace.is_empty() {
             bail!("Namespace may not be an empty string");
         }
 

@@ -72,6 +72,8 @@ mod api {
     }
 
     #[derive(serde::Deserialize, Clone, Debug)]
+    // TODO: remove allow if new variants are added.
+    #[allow(clippy::enum_variant_names)]
     pub enum Query {
         PodStart(PodStartRequest),
         PodStatus(PodStatusRequest),
@@ -107,6 +109,8 @@ mod api {
     }
 
     #[derive(serde::Serialize, Clone, Debug)]
+    // TODO: remove allow if new variants are added.
+    #[allow(clippy::enum_variant_names)]
     pub enum QueryOutput {
         PodStart(WorkspaceStatus),
         PodStatus(WorkspaceStatus),
