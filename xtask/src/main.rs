@@ -129,6 +129,10 @@ fn test() -> Result<(), DynError> {
 /// Format all code. (Rust + Python)
 fn format() -> Result<(), DynError> {
     run("cargo", &["fmt"])?;
+    Command::new("cargo")
+        .arg("fmt")
+        .current_dir(root_dir()?.join("xtask"))
+        .run_checked()?;
     run("black", &["cli"])
 }
 
