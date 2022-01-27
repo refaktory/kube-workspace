@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context};
 use k8s_openapi::{
     api::core::v1::{Namespace, Node, PersistentVolumeClaim, Pod, Service},
     apimachinery::pkg::api::resource::Quantity,
+    NamespaceResourceScope,
 };
 use kube::{
     api::{AttachParams, DeleteParams, ListParams, ObjectList, ObjectMeta, Patch, PatchParams},
@@ -340,6 +341,9 @@ impl k8s_openapi::Resource for PodMetrics {
     const KIND: &'static str = "pod";
     const VERSION: &'static str = "v1beta1";
     const API_VERSION: &'static str = "metrics.k8s.io/v1beta1";
+    const URL_PATH_SEGMENT: &'static str = "pods";
+
+    type Scope = NamespaceResourceScope;
 }
 
 impl k8s_openapi::Metadata for PodMetrics {
@@ -404,12 +408,39 @@ pub fn pod_name(pod: &Pod) -> &String {
     pod.metadata.name.as_ref().unwrap()
 }
 
+/// Extract the NodePort of a `Service`.
+pub fn service_get_nodeport(svc: &Service) -> Option<i32> {
+    svc.spec.as_ref()?.ports.as_ref()?.first()?.node_port
+}
+
+/// Determine if all containers of a `Pod` are ready.
+/// Ready means that they are up and running and are passing the readinessCheck
+/// if one is configured.
+pub fn pod_containers_ready(pod: &Pod) -> bool {
+    pod.status
+        .as_ref()
+        .and_then(|x| x.container_statuses.as_ref())
+        .map(|s| s.iter().all(|x| x.ready))
+        .unwrap_or_default()
+}
+
+/// Get the ip of a Node.
+pub fn node_ip(node: &Node) -> Option<String> {
+    node.status
+        .as_ref()?
+        .addresses
+        .as_ref()?
+        .iter()
+        .find(|addr| addr.type_ == "InternalIP")
+        .map(|addr| addr.address.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use k8s_openapi::api::core::v1::{Container, PodSpec};
 
     use super::*;
-    use crate::operator::WorkspacePhase;
+    use crate::operator::types::WorkspacePhase;
 
     // #[tokio::test]
     // async fn test_metrics() {
