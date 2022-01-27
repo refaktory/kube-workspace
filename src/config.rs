@@ -1,6 +1,6 @@
 //! Application configuration and parsing.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::SocketAddr};
 
 use anyhow::{bail, Context};
 use k8s_openapi::api::core::v1::PodSpec;
@@ -14,8 +14,9 @@ const ENV_VAR_CONFIG_PATH: &str = "KUBE_WORKSPACE_OPERATOR_CONFIG";
 /// Can be parsed from a config.json config file or from env vars.
 #[derive(serde::Deserialize, Default, Debug)]
 pub struct ConfigSource {
-    /// Port where the API server should run.
-    pub server_port: Option<u16>,
+    /// Server address to listen on.
+    /// Eg: 0.0.0.0:8080 / 127.0.0.1:8080
+    pub server_address: Option<String>,
 
     /// The namespace where user volumes and workspace pods are created.
     pub namespace: Option<String>,
@@ -55,7 +56,7 @@ impl ConfigSource {
 
         // TODO: parse individual settings from individual env vars
         // ( KUBE_WORKSPACE_* )
-        let server_port = file_config.server_port;
+        let server_address = file_config.server_address;
         let namespace = file_config.namespace;
         let auto_create_namespace = file_config.auto_create_namespace;
         let users = file_config.users;
@@ -65,7 +66,7 @@ impl ConfigSource {
         let auto_shutdown = file_config.auto_shutdown;
 
         let source = Self {
-            server_port,
+            server_address,
             namespace,
             auto_create_namespace,
             users,
@@ -75,15 +76,18 @@ impl ConfigSource {
             auto_shutdown,
         };
 
-        let config = source.into_config();
-        config.validate()?;
-        Ok(config)
+        source.build()
     }
 
     /// Convert into a [`Config`] by setting default values.
-    fn into_config(self) -> Config {
-        Config {
-            server_port: self.server_port.unwrap_or(8080),
+    fn build(self) -> Result<Config, anyhow::Error> {
+        let server_address: SocketAddr = self
+            .server_address
+            .unwrap_or_else(|| "0.0.0.0:8080".to_string())
+            .parse()
+            .context("Invalid server address")?;
+        let c = Config {
+            server_address,
             namespace: self
                 .namespace
                 .map(|x| x.trim().to_string())
@@ -102,7 +106,10 @@ impl ConfigSource {
                 cpu_usage: None,
                 tcp_idle: None,
             }),
-        }
+        };
+
+        c.validate()?;
+        Ok(c)
     }
 }
 
@@ -112,7 +119,7 @@ impl ConfigSource {
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Port where the API server should run.
-    pub server_port: u16,
+    pub server_address: std::net::SocketAddr,
 
     /// The namespace where user volumes and workspace pods are created.
     pub namespace: String,
