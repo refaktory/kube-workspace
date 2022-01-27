@@ -4,10 +4,10 @@ configSecretName: "kube-workspace-operator-config"
 replicaCount: 1
 
 image:
-  repository: theduke/kube-workspace-operator
+  repository: refaktory/kube-workspace-operator
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "0.1.0"
+  tag: "0.2.0"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -39,6 +39,9 @@ service:
   type: ClusterIP
   port: 80
 
+prometheus:
+  port: 9999
+
 ingress:
   enabled: false
   annotations: {}
@@ -55,6 +58,8 @@ ingress:
   #  - secretName: chart-example-tls
   #    hosts:
   #      - chart-example.local
+
+config: {}
 
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious

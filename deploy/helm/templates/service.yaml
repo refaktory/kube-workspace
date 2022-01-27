@@ -11,5 +11,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    - port: {{ .Values.prometheus.port }}
+      targetPort: prometheus
+      protocol: TCP
+      name: prometheus
   selector:
     {{- include "kube-workspace-operator.selectorLabels" . | nindent 4 }}
