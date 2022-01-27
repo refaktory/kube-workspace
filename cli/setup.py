@@ -3,11 +3,11 @@
 from distutils.core import setup
 
 setup(
-    name="kworkspaces",
+    name="kworkspace",
     version="0.1.0",
-    packages=["kworkspaces"],
+    packages=["kworkspace"],
     entry_points="""
   [console_scripts]
-  kworkspaces = kworkspaces:run
+  kworkspaces = kworkspace:run
   """,
 )

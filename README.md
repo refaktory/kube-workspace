@@ -40,7 +40,7 @@ See [Usage - Operator] for how to configure and deploy the server backend.
 ### Installation:
 
 * Pip:
-  `pip install -e git+https://github.com/theduke/kube-workspaces.git#egg=version_subpkg&subdirectory=cli`
+  `python -m pip install -e git+https://github.com/theduke/kube-workspaces.git#egg=version_subpkg&subdirectory=cli`
 
 * Nix/NixOS: 
   **Flakes must be enabled**
