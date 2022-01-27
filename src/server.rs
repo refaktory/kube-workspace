@@ -15,6 +15,8 @@ pub async fn run_server(op: Operator) {
 mod api {
     //! API handler logic and types.
 
+    use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
+
     use crate::{operator, AnyError};
 
     use super::Operator;
@@ -37,9 +39,12 @@ mod api {
                     .zip(port)
                     .map(|(address, port)| SshAddress { address, port });
 
+                let info = status.pod.as_ref().map(WorkspaceInfo::from_pod);
+
                 Ok(QueryOutput::PodStart(WorkspaceStatus {
                     phase: status.phase,
                     ssh_address,
+                    info,
                 }))
             }
             Query::PodStatus(req) => {
@@ -53,10 +58,12 @@ mod api {
                 let ssh_address = addr
                     .zip(port)
                     .map(|(address, port)| SshAddress { address, port });
+                let info = status.pod.as_ref().map(WorkspaceInfo::from_pod);
 
                 Ok(QueryOutput::PodStatus(WorkspaceStatus {
                     phase: status.phase,
                     ssh_address,
+                    info,
                 }))
             }
             Query::PodStop(req) => {
@@ -103,9 +110,41 @@ mod api {
     }
 
     #[derive(serde::Serialize, Clone, Debug)]
+    pub struct WorkspaceInfo {
+        /// The OCI image the container is running.
+        pub image: String,
+        pub memory_limit: Option<Quantity>,
+        pub cpu_limit: Option<Quantity>,
+    }
+
+    impl WorkspaceInfo {
+        pub fn from_pod(pod: &k8s_openapi::api::core::v1::Pod) -> Self {
+            let container = pod.spec.as_ref().and_then(|s| s.containers.first());
+
+            let limits = container
+                .and_then(|c| c.resources.as_ref())
+                .and_then(|r| r.limits.as_ref());
+
+            let image = container
+                .and_then(|c| c.image.clone())
+                .unwrap_or_else(|| "<unknown>".to_string());
+
+            let memory_limit = limits.and_then(|l| l.get("memory").cloned());
+            let cpu_limit = limits.and_then(|l| l.get("cpu").cloned());
+
+            Self {
+                image,
+                memory_limit,
+                cpu_limit,
+            }
+        }
+    }
+
+    #[derive(serde::Serialize, Clone, Debug)]
     pub struct WorkspaceStatus {
         phase: operator::WorkspacePhase,
         ssh_address: Option<SshAddress>,
+        info: Option<WorkspaceInfo>,
     }
 
     #[derive(serde::Serialize, Clone, Debug)]
