@@ -65,7 +65,7 @@
         # This will put the image into `./result`, which can then be 
         # loaded into the Docker daemon with `docker load < ./result`.
         packages.dockerImage = pkgs.dockerTools.buildImage {
-          name = "theduke/kube-workspace-operator";
+          name = "refaktory/kube-workspace-operator";
           tag = "${packages.kube-workspace-operator.version}";
           config = {
             Cmd = [ "${packages.kube-workspace-operator}/bin/kube-workspace-operator" ];
