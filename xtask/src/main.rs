@@ -1,8 +1,8 @@
 use std::{path::PathBuf, process::Command};
 
-type DynError = Box<dyn std::error::Error>;
+use anyhow::{anyhow, Context, Error as AnyError};
 
-fn main() -> Result<(), DynError> {
+fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let args_str: Vec<_> = args.iter().map(|x| x.as_str()).collect();
 
@@ -19,23 +19,23 @@ fn main() -> Result<(), DynError> {
         ["ci-rust"] => ci_rust(),
         ["ci-cli"] => ci_cli(),
         ["ci"] => ci(),
-        other => return Err(format!("Unknown arguments: {:?}", other).into()),
+        other => return Err(anyhow!("Unknown arguments: {:?}", other)),
     }
 }
 
-fn root_dir() -> Result<PathBuf, DynError> {
-    std::env::var("CARGO_MANIFEST_DIR")
-        .map_err(|_| "Required env var CARGO_MANIFEST_DIR not found".into())
+fn root_dir() -> Result<PathBuf, AnyError> {
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .context("Required env var CARGO_MANIFEST_DIR not found")
         .and_then(|raw| {
             PathBuf::from(raw)
                 .parent()
                 .map(|p| p.to_path_buf())
-                .ok_or_else(|| "Could not find root".to_string().into())
+                .context("Could not find root")
         })
 }
 
 /// Run a command and return `Err` on non-zero status codes.
-fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynError> {
+fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), AnyError> {
     eprintln!("Running '{} {}'", cmd, args.join(" "));
     let mut c = std::process::Command::new(cmd);
 
@@ -50,19 +50,19 @@ fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynErro
         eprintln!("\n");
         Ok(())
     } else {
-        Err(format!("{} failed with status: {}", cmd, status).into())
+        Err(anyhow!("{} failed with status: {}", cmd, status))
     }
 }
 
 trait CommandExt {
-    fn run_checked(&mut self) -> Result<(), DynError>;
+    fn run_checked(&mut self) -> Result<(), AnyError>;
 }
 
 impl CommandExt for &mut std::process::Command {
-    fn run_checked(&mut self) -> Result<(), DynError> {
+    fn run_checked(&mut self) -> Result<(), AnyError> {
         let status = self.spawn()?.wait()?;
         if !status.success() {
-            Err(format!("Command failed with exit code: {:?}", status).into())
+            Err(anyhow!("Command failed with exit code: {:?}", status))
         } else {
             Ok(())
         }
@@ -70,13 +70,13 @@ impl CommandExt for &mut std::process::Command {
 }
 
 /// Run a command with env vars and return `Err` on non-zero status codes.
-fn run(cmd: &str, args: &[&str]) -> Result<(), DynError> {
+fn run(cmd: &str, args: &[&str]) -> Result<(), AnyError> {
     std::env::set_current_dir(root_dir()?)?;
     run_env(cmd, args, &[])
 }
 
 /// Run Rust lints (rustfmt, clippy)
-fn lint_rust() -> Result<(), DynError> {
+fn lint_rust() -> Result<(), AnyError> {
     // Run clippy with warnings set to deny.
     eprintln!("Running CLIPPY checks");
     let a = run("cargo", &["clippy", "--", "-D", "warnings"]);
@@ -103,11 +103,11 @@ fn lint_rust() -> Result<(), DynError> {
     a.and(b)
 }
 
-fn test_rust() -> Result<(), DynError> {
+fn test_rust() -> Result<(), AnyError> {
     run("cargo", &["test", "--all-features"])
 }
 
-fn lint_kubernetes() -> Result<(), DynError> {
+fn lint_kubernetes() -> Result<(), AnyError> {
     eprintln!("Linting helm chart...");
     Command::new("helm")
         .arg("lint")
@@ -118,7 +118,7 @@ fn lint_kubernetes() -> Result<(), DynError> {
     Ok(())
 }
 
-fn lint_cli() -> Result<(), DynError> {
+fn lint_cli() -> Result<(), AnyError> {
     eprintln!("Linting CLI...");
     run("mypy", &["--strict", "./cli"])?;
     run("pylint", &["cli/kworkspace", "cli/setup.py"])?;
@@ -129,10 +129,10 @@ fn lint_cli() -> Result<(), DynError> {
 }
 
 /// Lint Rust and Python CLI.
-fn lint() -> Result<(), DynError> {
-    let a = lint_rust();
-    let b = lint_cli();
-    let c = lint_kubernetes();
+fn lint() -> Result<(), AnyError> {
+    let a = lint_rust().context("Rust lints failed");
+    let b = lint_cli().context("CLI lints failed");
+    let c = lint_kubernetes().context("Kubernetes lints failed");
     a.and(b).and(c)?;
 
     eprintln!("All lints succeeded");
@@ -140,12 +140,12 @@ fn lint() -> Result<(), DynError> {
 }
 
 /// Run tests for Rust and Python CLI.
-fn test() -> Result<(), DynError> {
+fn test() -> Result<(), AnyError> {
     test_rust()
 }
 
 /// Format all code. (Rust + Python)
-fn format() -> Result<(), DynError> {
+fn format() -> Result<(), AnyError> {
     run("cargo", &["fmt"])?;
     Command::new("cargo")
         .arg("fmt")
@@ -163,7 +163,7 @@ fn format() -> Result<(), DynError> {
 
 type ImageName = String;
 
-fn nix_build_and_load_docker_image(flake_package_name: &str) -> Result<ImageName, DynError> {
+fn nix_build_and_load_docker_image(flake_package_name: &str) -> Result<ImageName, AnyError> {
     eprintln!("Building docker image with package {flake_package_name}...");
     run("nix", &["build", &format!(".#{flake_package_name}")])?;
     eprintln!(
@@ -180,7 +180,7 @@ fn nix_build_and_load_docker_image(flake_package_name: &str) -> Result<ImageName
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        return Err("`docker load` failed".to_string().into());
+        return Err(AnyError::msg("`docker load` failed"));
     }
 
     let stdout = std::str::from_utf8(&out.stdout)?;
@@ -188,7 +188,7 @@ fn nix_build_and_load_docker_image(flake_package_name: &str) -> Result<ImageName
         .lines()
         .find(|line| line.trim().starts_with("Loaded image:"))
         .and_then(|x| x.split_once(':').map(|x| x.1))
-        .ok_or_else(|| "Could not parse output".to_string())?
+        .context("Could not parse output")?
         .trim();
 
     eprintln!("Built and loaded docker image '{}'", name);
@@ -196,15 +196,15 @@ fn nix_build_and_load_docker_image(flake_package_name: &str) -> Result<ImageName
     Ok(name.to_string())
 }
 
-fn build_docker_image_operator() -> Result<ImageName, DynError> {
+fn build_docker_image_operator() -> Result<ImageName, AnyError> {
     nix_build_and_load_docker_image("docker-image-operator")
 }
 
-fn build_docker_image_cli() -> Result<ImageName, DynError> {
+fn build_docker_image_cli() -> Result<ImageName, AnyError> {
     nix_build_and_load_docker_image("docker-image-cli")
 }
 
-fn build_all_docker_images() -> Result<(CliImageName, OperatorImageName), DynError> {
+fn build_all_docker_images() -> Result<(CliImageName, OperatorImageName), AnyError> {
     let op = build_docker_image_operator()?;
     let cli = build_docker_image_cli()?;
 
@@ -212,7 +212,7 @@ fn build_all_docker_images() -> Result<(CliImageName, OperatorImageName), DynErr
 }
 
 /// Publish a previously built docker image.
-fn publish_all_docker_images() -> Result<(), DynError> {
+fn publish_all_docker_images() -> Result<(), AnyError> {
     let (img_operator, img_cli) = build_all_docker_images()?;
 
     eprintln!("Image built. Publishing {}", img_operator);
@@ -228,12 +228,12 @@ type CliImageName = ImageName;
 type OperatorImageName = ImageName;
 
 /// Build all docker images and load them into the local daemon.
-fn cmd_docker_build() -> Result<(), DynError> {
+fn cmd_docker_build() -> Result<(), AnyError> {
     build_all_docker_images()?;
     Ok(())
 }
 
-fn kind_install() -> Result<(), DynError> {
+fn kind_install() -> Result<(), AnyError> {
     let (image_name_operator, _image_name_cli) = build_all_docker_images()?;
 
     Command::new("kind")
@@ -245,7 +245,7 @@ fn kind_install() -> Result<(), DynError> {
     let tag = image_name_operator
         .split(':')
         .nth(1)
-        .ok_or_else(|| "Could not parse image tag".to_string())?;
+        .context("Could not parse image tag")?;
 
     Command::new("helm")
         .args([
@@ -264,19 +264,19 @@ fn kind_install() -> Result<(), DynError> {
 }
 
 /// Run CI checks for the operator.
-fn ci_rust() -> Result<(), DynError> {
+fn ci_rust() -> Result<(), AnyError> {
     let b = test_rust();
     let a = lint_rust();
     a.and(b)
 }
 
 /// Run CI checks for CLI.
-fn ci_cli() -> Result<(), DynError> {
+fn ci_cli() -> Result<(), AnyError> {
     lint_cli()
 }
 
 /// Run all CI checks for both operator and cli.
-fn ci() -> Result<(), DynError> {
+fn ci() -> Result<(), AnyError> {
     let b = ci_rust();
     let a = ci_cli();
     a.and(b)
