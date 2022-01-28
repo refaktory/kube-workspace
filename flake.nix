@@ -98,6 +98,8 @@
               mypy
               # Python linter.
               pypkgs.pylint
+              # Python LSP
+              pyright
 
               # kind (Kubernetes in Docker) for integration tests.
               kind
