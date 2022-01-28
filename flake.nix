@@ -40,27 +40,11 @@
           ];
         };
 
-        # CLI
-        packages.kube-workspace-cli = pypkgs.buildPythonPackage {
-          pname = "kworkspaces";
-          version = cliVersion;
-          src = ./cli;
-
-          postShellHook = ''
-            mv $out/bin/kworkspaces.py $out/bin/kworkspaces
-          '';
-
-          meta = {
-            homepage = "https://github.com/theduke/kube-workspaces";
-            description = "CLI for kube-workspaces";
-          };
-        };
-
         # Operator Docker image.
-        # To build, run `nix build .#dockerImage`.
-        # This will put the image into `./result`, which can then be 
+        # To build, run `nix build .#docker-image-operator`.
+        # This will put the image into `./result`, which can then be
         # loaded into the Docker daemon with `docker load < ./result`.
-        packages.dockerImage = pkgs.dockerTools.buildImage {
+        packages.docker-image-operator = pkgs.dockerTools.buildImage {
           name = "refaktory/kube-workspace-operator";
           tag = "${packages.kube-workspace-operator.version}";
           config = {
@@ -74,7 +58,29 @@
           };
         };
 
-        defaultPackage = packages.kube-workspace-operator;
+        # CLI
+        packages.kube-workspace-cli = pypkgs.buildPythonPackage {
+          pname = "kworkspace";
+          version = cliVersion;
+          src = ./cli;
+
+          postShellHook = ''
+            mv $out/bin/kworkspace.py $out/bin/kworkspace
+          '';
+
+          meta = {
+            homepage = "https://github.com/theduke/kube-workspaces";
+            description = "CLI for kube-workspaces";
+          };
+        };
+
+        packages.docker-image-cli = pkgs.dockerTools.buildImage {
+          name = "refaktory/kube-workspace-cli";
+          tag = cliVersion;
+          config = {
+            Cmd = [ "${packages.kube-workspace-cli}/bin/kworkspace" ];
+          };
+        };
 
         apps.kube-workspace-operator = flakeutils.lib.mkApp {
           drv = packages.kube-workspace-operator;
