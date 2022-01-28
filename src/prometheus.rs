@@ -130,6 +130,8 @@ pub async fn run_exporter_service(
     loop {
         if let Err(err) = tokio::spawn(run_exporter(metrics.clone(), address)).await {
             tracing::error!(?err, "prometheus metrics exporter failed");
+            // TODO: exponential backoff?
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         }
     }
 }
