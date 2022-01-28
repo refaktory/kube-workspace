@@ -13,13 +13,13 @@ fn main() -> Result<(), DynError> {
         ["lint"] => lint(),
         ["test-rust"] => test_rust(),
         ["test"] => test(),
-        ["docker-build"] => docker_image_build().map(|_| ()),
+        ["docker-build"] => cmd_docker_build().map(|_| ()),
         ["kind-install"] => kind_install(),
-        ["docker-publish"] => docker_image_publish(),
+        ["docker-publish"] => publish_all_docker_images(),
         ["ci-rust"] => ci_rust(),
         ["ci-cli"] => ci_cli(),
         ["ci"] => ci(),
-        other => Err(format!("Unknown arguments: {:?}", other))?,
+        other => return Err(format!("Unknown arguments: {:?}", other).into()),
     }
 }
 
@@ -50,7 +50,7 @@ fn run_env(cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Result<(), DynErro
         eprintln!("\n");
         Ok(())
     } else {
-        Err(format!("{} failed with status: {}", cmd, status))?
+        Err(format!("{} failed with status: {}", cmd, status).into())
     }
 }
 
@@ -80,9 +80,26 @@ fn lint_rust() -> Result<(), DynError> {
     // Run clippy with warnings set to deny.
     eprintln!("Running CLIPPY checks");
     let a = run("cargo", &["clippy", "--", "-D", "warnings"]);
+
     // rustfmt check.
     eprintln!("Running rustfmt check");
     let b = run("cargo", &["fmt", "--check"]);
+    a.and(b)?;
+
+    // Do the same for xtask
+    // Run clippy with warnings set to deny.
+    eprintln!("Running CLIPPY checks for xtasks");
+    let a = Command::new("cargo")
+        .current_dir(root_dir()?.join("xtask"))
+        .args(&["clippy", "--", "-D", "warnings"])
+        .run_checked();
+
+    // rustfmt check.
+    eprintln!("Running rustfmt check");
+    let b = Command::new("cargo")
+        .current_dir(root_dir()?.join("xtask"))
+        .args(&["fmt", "--check"])
+        .run_checked();
     a.and(b)
 }
 
@@ -134,16 +151,22 @@ fn format() -> Result<(), DynError> {
         .arg("fmt")
         .current_dir(root_dir()?.join("xtask"))
         .run_checked()?;
-    run("black", &["cli"])
+
+    eprintln!("Formatting python code...");
+    run("black", &["cli"])?;
+
+
+    eprintln!("Formatting nix code...");
+    run("nixpkgs-fmt", &["flake.nix"])?;
+
+    Ok(())
 }
 
 type ImageName = String;
 
-/// Build docker image and load it into the local daemon.
-/// Returns image name. (repo/image:tag)
-fn docker_image_build() -> Result<ImageName, DynError> {
-    eprintln!("Building docker image...");
-    run("nix", &["build", ".#dockerImage"])?;
+fn nix_build_and_load_docker_image(flake_package_name: &str) -> Result<ImageName, DynError> {
+    eprintln!("Building docker image with package {flake_package_name}...");
+    run("nix", &["build", &format!(".#{flake_package_name}")])?;
     eprintln!(
         "Docker image archive created in './result'. \
          Loading with `docker load < result`..."
@@ -158,15 +181,15 @@ fn docker_image_build() -> Result<ImageName, DynError> {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        return Err("`docker load` failed")?;
+        return Err("`docker load` failed".to_string().into());
     }
 
     let stdout = std::str::from_utf8(&out.stdout)?;
     let name = stdout
         .lines()
         .find(|line| line.trim().starts_with("Loaded image:"))
-        .and_then(|x| x.splitn(2, ':').nth(1))
-        .ok_or_else(|| "Could not parse output")?
+        .and_then(|x| x.split_once(':').map(|x| x.1))
+        .ok_or_else(|| "Could not parse output".to_string())?
         .trim();
 
     eprintln!("Built and loaded docker image '{}'", name);
@@ -174,15 +197,53 @@ fn docker_image_build() -> Result<ImageName, DynError> {
     Ok(name.to_string())
 }
 
+fn build_docker_image_operator() -> Result<ImageName, DynError> {
+    nix_build_and_load_docker_image("docker-image-operator")
+}
+
+fn build_docker_image_cli() -> Result<ImageName, DynError> {
+    nix_build_and_load_docker_image("docker-image-cli")
+}
+
+fn build_all_docker_images() -> Result<(CliImageName, OperatorImageName), DynError> {
+    let op = build_docker_image_operator()?;
+    let cli = build_docker_image_cli()?;
+
+    Ok((op, cli))
+}
+
+/// Publish a previously built docker image.
+fn publish_all_docker_images() -> Result<(), DynError> {
+    let (img_operator, img_cli) = build_all_docker_images()?;
+
+    eprintln!("Image built. Publishing {}", img_operator);
+    run("docker", &["push", &img_operator])?;
+
+    eprintln!("Image built. Publishing {}", img_cli);
+    run("docker", &["push", &img_cli])?;
+
+    Ok(())
+}
+
+type CliImageName = ImageName;
+type OperatorImageName = ImageName;
+
+/// Build all docker images and load them into the local daemon.
+fn cmd_docker_build() -> Result<(), DynError> {
+    build_all_docker_images()?;
+    Ok(())
+}
+
 fn kind_install() -> Result<(), DynError> {
-    let image_name = docker_image_build()?;
+    let (image_name_operator, _image_name_cli) = build_all_docker_images()?;
+
     Command::new("kind")
         .arg("load")
         .arg("docker-image")
-        .arg(&image_name)
+        .arg(&image_name_operator)
         .run_checked()?;
 
-    let tag = image_name
+    let tag = image_name_operator
         .split(':')
         .nth(1)
         .ok_or_else(|| "Could not parse image tag".to_string())?;
@@ -200,14 +261,6 @@ fn kind_install() -> Result<(), DynError> {
         ])
         .run_checked()?;
 
-    Ok(())
-}
-
-/// Publish a previously built docker image.
-fn docker_image_publish() -> Result<(), DynError> {
-    let name = docker_image_build()?;
-    eprintln!("Image built. Publishing {}", name);
-    run("docker", &["push", &name])?;
     Ok(())
 }
 
