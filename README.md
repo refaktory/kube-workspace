@@ -18,12 +18,10 @@ development environment for machine learning practitioners.
 * Helm chart
 
 Work in progress: 
-* Automatic shutdown of workspaces without active SSH connections and near zero
-  CPU usage
 * Scheduled (automatic) and manual backup of the persistent storage
 * Logging of SSH sessions
 
-### Authentication
+## Authentication
 
 For ease of use authentication is handled via SSH public keys. 
 The server configuration must specify a whitelist of user/public key pairs.
@@ -52,8 +50,30 @@ See [Deploy] below for how to configure and deploy the project to  a Kubernetes 
 
 ### Commands:
 
-* `kworkspace start` - Start your workspace
+* `kworkspace connect` - Ensure your workspace is running, then connect with SSH
+* `kworkspace start` - Start your workspace if it is not already running
 * `kworkspace stop`- Stop your workspace
+
+
+### Port Forwarding
+
+If you want to acces a port either on the workspace container, or from a
+service running in the cluster, you can use SSH port forwarding.
+
+The CLI makes this easy:
+
+* Forward container port 8000 to your machine
+  - `kworkspace connect -f 8000`:
+  - `curl localhost:8000` => works!
+* Forward container port 80 to 8080 on your machine
+  - `kworkspace connect -f 8080:80`:
+  - `curl localhost:8080` => works!
+* Forward a remote host on port 80 to your machine on port 8888
+  - `kworkspace connect -f 8888:some-service.namespace.svc.cluster.local:80`:
+  - `curl localhost:8888` => works!
+
+**Note**: the port forward only remains active for the livetime of the SSH session.
+So don't close the terminal!
 
 ## Development
 
