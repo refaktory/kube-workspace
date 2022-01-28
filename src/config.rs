@@ -124,6 +124,16 @@ impl ConfigSource {
             })
         };
 
+        let users = self
+            .users
+            .into_iter()
+            .map(|mut u| {
+                u.ssh_public_key = u.ssh_public_key.trim().to_string();
+                u.username = u.username.trim().to_string();
+                u
+            })
+            .collect::<Vec<_>>();
+
         let c = Config {
             server_address,
             namespace: self
@@ -131,7 +141,7 @@ impl ConfigSource {
                 .map(|x| x.trim().to_string())
                 .unwrap_or_else(|| "kube-workspaces".to_string()),
             auto_create_namespace: self.auto_create_namespace.unwrap_or(true),
-            users: self.users,
+            users,
             max_home_volume_size: self
                 .max_home_volume_size
                 .unwrap_or_else(|| "10Gi".to_string()),
