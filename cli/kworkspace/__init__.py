@@ -22,6 +22,11 @@ import subprocess
 AnyDict = Dict[str, Any]
 
 
+def host_username() -> str:
+    """Get the current username from the OS."""
+    return getpass.getuser()
+
+
 class ApiError(Exception):
     """Error response from API"""
 
@@ -92,9 +97,13 @@ class ConfigFile:
             except Exception:  # pylint: disable=broad-except
                 url = ""
 
-        user = (
-            input("Username (leave empty to use current system user): ").strip() or None
+        current_user = host_username()
+        user = input(
+            f'Username: (leave empty to use current username "{current_user}")'
         )
+        user = user or current_user
+        if not user:
+            raise Exception("Could not determine username")
 
         ssh_path = cls.initialize_ssh_path()
 
@@ -161,7 +170,7 @@ class SshAddress:
         parts += extra_args
 
         addr_prefix = (
-            config.username + "@" if config.username != current_username() else ""
+            config.username + "@" if config.username != host_username() else ""
         )
         addr = addr_prefix + self.address
         parts.append(addr)
@@ -429,11 +438,6 @@ class PortForwardSpec:
         return ["-L", f"{self.local_port}:{self.remote_host}:{self.remote_port}"]
 
 
-def current_username() -> str:
-    """Get the current username from the OS."""
-    return getpass.getuser()
-
-
 @dataclass(frozen=True)
 class Args:
     """Parsed command line arguments."""
@@ -515,7 +519,7 @@ def run() -> None:
 
     file = ConfigFile.load(not args.api_url, custom_path=args.config_path)
 
-    user = args.user or file.username or current_username()
+    user = args.user or file.username or host_username()
     ssh_key_path = args.ssh_key_path or file.ssh_key_path
     if not ssh_key_path:
         ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
