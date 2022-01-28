@@ -7,14 +7,15 @@
     naersk.url = "github:nmattia/naersk";
   };
 
-  outputs = { self, nixpkgs, flakeutils, naersk }: 
+  outputs = { self, nixpkgs, flakeutils, naersk }:
     flakeutils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages."${system}";
         naersk-lib = naersk.lib."${system}";
         pypkgs = pkgs.python38Packages;
         cliVersion = "0.2.0";
-      in rec {
+      in
+      rec {
 
         # Operator (server)
         packages.kube-workspace-operator = naersk-lib.buildPackage {
@@ -26,7 +27,7 @@
               let
                 filename = (baseNameOf path);
                 # TODO: only filter main path, not nested paths too
-                included = !(builtins.elem filename [".github" ".gitignore" "flake.nix" "flake.lock" "cli" "deploy" "xtask" ".git"]);
+                included = !(builtins.elem filename [ ".github" ".gitignore" "flake.nix" "flake.lock" "cli" "deploy" "xtask" ".git" ]);
               in
               included
             )
@@ -50,10 +51,10 @@
           config = {
             Cmd = [ "${packages.kube-workspace-operator}/bin/kube-workspace-operator" ];
             ExposedPorts = {
-              "8080/tcp" = {};
+              "8080/tcp" = { };
             };
             Volumes = {
-              "/config" = {};
+              "/config" = { };
             };
           };
         };
@@ -93,34 +94,34 @@
         defaultApp = apps.kube-workspace-operator;
 
         devShell = pkgs.stdenv.mkDerivation {
-            name = "kube-workspace-operator";
-            src = self;
-            buildInputs = with pkgs; [
-              pkgconfig
+          name = "kube-workspace-operator";
+          src = self;
+          buildInputs = with pkgs; [
+            pkgconfig
 
-              # Python formatter.
-              black
-              # Python type checker.
-              mypy
-              # Python linter.
-              pypkgs.pylint
-              # Python LSP
-              pyright
+            # Python formatter.
+            black
+            # Python type checker.
+            mypy
+            # Python linter.
+            pypkgs.pylint
+            # Python LSP
+            pyright
 
-              # kind (Kubernetes in Docker) for integration tests.
-              kind
-            ];
-            propagatedBuildInputs = with pkgs; [
-              openssl
-            ];
-            buildPhase = "";
-            installPhase = "";
+            # kind (Kubernetes in Docker) for integration tests.
+            kind
+          ];
+          propagatedBuildInputs = with pkgs; [
+            openssl
+          ];
+          buildPhase = "";
+          installPhase = "";
 
-            # Allow `cargo run` etc to find ssl lib.
-            LD_LIBRARY_PATH = "${pkgs.openssl.out}/lib";
-            RUST_BACKTRACE = "1";
-            RUST_LOG = "kube_workspace_operator=trace";
-            KUBE_WORKSPACE_OPERATOR_CONFIG = "./deploy/config.json";
+          # Allow `cargo run` etc to find ssl lib.
+          LD_LIBRARY_PATH = "${pkgs.openssl.out}/lib";
+          RUST_BACKTRACE = "1";
+          RUST_LOG = "kube_workspace_operator=trace";
+          KUBE_WORKSPACE_OPERATOR_CONFIG = "./deploy/config.json";
         };
 
       }

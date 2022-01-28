@@ -155,7 +155,6 @@ fn format() -> Result<(), DynError> {
     eprintln!("Formatting python code...");
     run("black", &["cli"])?;
 
-
     eprintln!("Formatting nix code...");
     run("nixpkgs-fmt", &["flake.nix"])?;
 
