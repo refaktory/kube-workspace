@@ -26,6 +26,7 @@ pub(super) async fn run_query(
             let info = status.pod.as_ref().map(WorkspaceInfo::from_pod);
 
             Ok(QueryOutput::PodStart(WorkspaceStatus {
+                username: user.username.clone(),
                 phase: status.phase,
                 ssh_address,
                 info,
@@ -45,6 +46,7 @@ pub(super) async fn run_query(
             let info = status.pod.as_ref().map(WorkspaceInfo::from_pod);
 
             Ok(QueryOutput::PodStatus(WorkspaceStatus {
+                username: user.username.clone(),
                 phase: status.phase,
                 ssh_address,
                 info,
@@ -126,6 +128,7 @@ impl WorkspaceInfo {
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct WorkspaceStatus {
+    pub username: String,
     pub phase: crate::operator::WorkspacePhase,
     pub ssh_address: Option<SshAddress>,
     pub info: Option<WorkspaceInfo>,
