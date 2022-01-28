@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Set up rustup
-        run: "rustup update $RUST_VERSION && rustup default $RUST_VERSION && rustup component add clippy"
+        run: "rustup update $RUST_VERSION && rustup default $RUST_VERSION && rustup component add clippy && rustup component add rustfmt"
 
       - name: rustc info
         run: "rustup run $RUST_VERSION rustc --version && rustup run stable cargo --version"
