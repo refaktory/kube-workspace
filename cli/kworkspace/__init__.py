@@ -17,6 +17,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 from enum import Enum
+import subprocess
 
 AnyDict = Dict[str, Any]
 
@@ -152,6 +153,20 @@ class SshAddress:
     address: str
     port: int
 
+    def build_ssh_command(self, config: Config, extra_args: list[str]) -> list[str]:
+        "Build the ssh command for a specific address and user(config)."
+        parts = ["ssh"]
+        if self.port != 22:
+            parts += ["-p", str(self.port)]
+        parts += extra_args
+
+        addr_prefix = (
+            config.username + "@" if config.username != current_username() else ""
+        )
+        addr = addr_prefix + self.address
+        parts.append(addr)
+        return parts
+
 
 class WorkspacePhase(Enum):
     """Enum of server side WorkspacePhase"""
@@ -167,9 +182,40 @@ class WorkspacePhase(Enum):
 class WorkspaceStatus:
     """Api response for the PodStart and WorkspaceStatus query."""
 
+    username: Optional[str]
     phase: WorkspacePhase
     ssh_address: Optional[SshAddress]
     info: Optional[WorkspaceInfo]
+
+    def is_ready(self) -> bool:
+        """Returns true if workspace is ready and reachable over SSH."""
+        return self.phase == WorkspacePhase.READY and self.ssh_address is not None
+
+    def render_info(self, config: Config) -> str:
+        """Render for display in the terminal."""
+
+        parts: list[tuple[str, str]] = []
+
+        if self.info:
+            parts.append(("Container Image", self.info.image))
+            if self.info.memory_limit is not None:
+                parts.append(("Memory Limit", self.info.memory_limit))
+            if self.info.cpu_limit is not None:
+                parts.append(("CPU Limit", self.info.cpu_limit))
+
+        if self.ssh_address:
+            parts.append(
+                (
+                    "Connect with SSH",
+                    " ".join(self.ssh_address.build_ssh_command(config, extra_args=[])),
+                )
+            )
+
+        out = ""
+        for (name, value) in parts:
+            out += f"* {name}: {value}\n"
+
+        return out
 
 
 @dataclass(frozen=True)
@@ -179,15 +225,6 @@ class WorkspaceInfo:
     image: str
     memory_limit: Optional[str]
     cpu_limit: Optional[str]
-
-    def render_for_cli(self) -> str:
-        """Render for display in the terminal."""
-        out = f"  * Image: {self.image}"
-        if self.memory_limit is not None:
-            out += f"\n    Memory: {self.memory_limit}"
-        if self.cpu_limit is not None:
-            out += f"\n    CPU: {self.memory_limit}"
-        return out
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> WorkspaceInfo:
@@ -202,6 +239,8 @@ class WorkspaceInfo:
 # API CLient.
 class Api:
     """API Client."""
+
+    config: Config
 
     def __init__(self, config: Config):
         self.config = config
@@ -237,6 +276,7 @@ class Api:
         data = self.query(query)
 
         status = data[what]
+        username = status.get("username")
         phase = WorkspacePhase(status.get("phase", "unknown"))
         ssh_address = (
             SshAddress(
@@ -245,8 +285,14 @@ class Api:
             if status.get("ssh_address", None)
             else None
         )
-        info = WorkspaceInfo.from_dict(status["info"]) if "info" in status else None
-        return WorkspaceStatus(phase, ssh_address, info)
+        info = (
+            WorkspaceInfo.from_dict(status["info"])
+            if "info" in status and status["info"] is not None
+            else None
+        )
+        return WorkspaceStatus(
+            username=username, phase=phase, ssh_address=ssh_address, info=info
+        )
 
     def pod_start(self) -> WorkspaceStatus:
         """Start a workspace."""
@@ -261,50 +307,66 @@ class Api:
         self._query_pod("PodStop")
 
 
-def run_start(api: Api) -> None:
-    """Run the `start` commmand."""
+def await_workspace_available(api: Api) -> WorkspaceStatus:
+    """Wait until a workspace is started and reachable over SSH.
+    Provides feedback via stdout.
+    """
+    current_phase = WorkspacePhase.UNKNOWN
+    while True:
+        res = api.pod_start()
+        if res.phase != current_phase:
+            print(f"\n{res.phase.value}->", end="")
+            current_phase = res.phase
+        if res.phase == WorkspacePhase.READY and res.ssh_address is not None:
+            print("")
+            return res
+        print("*", end="", flush=True)
+        time.sleep(2)
 
-    user_prefix = (
-        api.config.username + "@" if current_username() != api.config.username else ""
-    )
+
+def run_start(api: Api) -> WorkspaceStatus:
+    """Run the `start` commmand."""
 
     status = api.pod_status()
     ssh = status.ssh_address
     if status.phase == WorkspacePhase.READY and ssh:
         print("Your workspace is already running!")
-        port = ssh.port
-        addr = ssh.address
-
-        if status.info:
-            print(status.info.render_for_cli())
-
-        print(f"Connect via ssh -p {port} {user_prefix}{addr}")
-        return
+        print(status.render_info(api.config))
+        return status
 
     curent_phase = status.phase
     print(f"Launching your workspace from phase: {curent_phase.value}")
     print("This might take a few minutes. Please be patient.")
-    while True:
-        res = api.pod_start()
-        if res.phase != curent_phase:
-            print(f"\n{res.phase.value}->", end="")
-            curent_phase = res.phase
-        if res.phase == WorkspacePhase.READY:
-            break
-        print("*", end="", flush=True)
-        time.sleep(2)
+    res = await_workspace_available(api)
 
     print("\nPod is ready!")
+    return res
 
-    if res.info:
-        print(res.info.render_for_cli())
-    ssh = res.ssh_address
-    if ssh:
-        port = ssh.port
-        addr = ssh.address
-        print(f"Connect via ssh -p {port} {user_prefix}{addr}")
+
+def run_connect(api: Api, port_forwards: list[str], user_command: list[str]) -> None:
+    """Start a workspace and connect to it via SSH."""
+    status = run_start(api)
+
+    extra_args = []
+    for forward in port_forwards:
+        try:
+            spec = PortForwardSpec.parse(forward)
+            extra_args += spec.build_ssh_args()
+        except Exception as err:  # pylint: disable=broad-except
+            print(f'INVALID port-forward spec "{forward}": {err}')
+            print('Consult "kworkspace connect --help"')
+            sys.exit(1)
+
+    if status.ssh_address:
+        ssh_cmd = status.ssh_address.build_ssh_command(api.config, extra_args)
+        cmd = ssh_cmd + user_command
+
+        print("Connecting via SSH...")
+        print("Running command: " + " ".join(cmd))
+        subprocess.run(cmd, check=True)
     else:
-        print("SSH not ready yet - call `start` again")
+        # Only there to satisfy the type checker.
+        raise Exception("Internal error: expected SSH address to be available")
 
 
 def run_stop(api: Api) -> None:
@@ -325,6 +387,46 @@ def run_stop(api: Api) -> None:
         time.sleep(2)
     print("\nWorkspace was shut down.")
     print("Run workspaces.py start to start it again")
+
+
+@dataclass
+class PortForwardSpec:
+    """SSH port forward specification."""
+
+    local_port: int
+    remote_port: int
+    remote_host: str
+
+    @classmethod
+    def parse(cls, spec: str) -> PortForwardSpec:
+        """Parse a spec from a string."""
+        parts = spec.strip().split(":")
+        count = len(parts)
+
+        local_port = 0
+        remote_port = 0
+        remote_host = "127.0.0.1"
+
+        if count == 1:
+            remote_port = int(parts[0])
+            local_port = remote_port
+        elif count == 2:
+            local_port = int(parts[0])
+            remote_port = int(parts[1])
+        elif count == 3:
+            local_port = int(parts[0])
+            remote_host = parts[1]
+            remote_port = int(parts[2])
+        else:
+            raise Exception("Invalid (empty) port spec")
+
+        return cls(
+            local_port=local_port, remote_port=remote_port, remote_host=remote_host
+        )
+
+    def build_ssh_args(self) -> list[str]:
+        """Build the ssh CLI arguments for this port forward."""
+        return ["-L", f"{self.local_port}:{self.remote_host}:{self.remote_port}"]
 
 
 def current_username() -> str:
@@ -348,7 +450,8 @@ def arg_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(description="Kubernetes workspace manager")
     parser.add_argument(
-        "--user", help="Username to use. Defaults to the current OS username"
+        "--user",
+        help="Username to use. Defaults to the current OS username",
     )
     parser.add_argument(
         "--ssh-key-path",
@@ -365,8 +468,34 @@ def arg_parser() -> argparse.ArgumentParser:
     subs = parser.add_subparsers(dest="subcommand", required=True)
 
     subs.add_parser("start", help="Start your workspace container.")
-    subs.add_parser("stop", help="Stop your workspace container.")
 
+    # Connect.
+    cmd_connect = subs.add_parser("connect", help="Connect to your workspace with SSH.")
+    cmd_connect.add_argument(
+        "-f",
+        "--port-forward",
+        type=str,
+        nargs="*",
+        action="extend",
+        dest="forward",
+        help=(
+            "The remote specification.\n"
+            + "Mirrors SSH -L format."
+            + "Eg: "
+            + "* '80' => forward local port 80 to remote localhost:80"
+            + "* '8000:80' => forward local port 8000 to remote localhost:80"
+            + "* '8000:domain.com:80' => forward local port 8000 to remote domain.com:80"
+        ),
+    )
+    cmd_connect.add_argument(
+        "command",
+        nargs="*",
+        action="extend",
+        help="Command to execute on the remote host.",
+        default=[],
+    )
+
+    subs.add_parser("stop", help="Stop your workspace container.")
     return parser
 
 
@@ -417,6 +546,10 @@ def run() -> None:
 
     if args.command == "start":
         run_start(api)
+    elif args.command == "connect":
+        forwards = namespace.forward or []
+        cmd = namespace.command
+        run_connect(api, port_forwards=forwards, user_command=cmd)
     elif args.command == "stop":
         run_stop(api)
     else:
