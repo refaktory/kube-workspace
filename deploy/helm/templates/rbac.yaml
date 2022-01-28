@@ -19,8 +19,11 @@ rules:
   resources: ["namespaces"]
   verbs: ["create", "get"]
 - apiGroups: [""] # "" indicates the core API group
+  resources: ["services"]
+  verbs: ["create", "get", "list"]
+- apiGroups: [""] # "" indicates the core API group
   resources: ["pods"]
-  verbs: ["get", "list"]
+  verbs: ["get", "list", "create"]
 - apiGroups: [""] # "" indicates the core API group
   resources: ["persistentvolumeclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
