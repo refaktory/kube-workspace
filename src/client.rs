@@ -493,10 +493,10 @@ pub fn node_ip(node: &Node) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use k8s_openapi::api::core::v1::{Container, PodSpec};
+    // use k8s_openapi::api::core::v1::{Container, PodSpec};
 
-    use super::*;
-    use crate::operator::WorkspacePhase;
+    // use super::*;
+    // use crate::operator::WorkspacePhase;
 
     // #[tokio::test]
     // async fn test_metrics() {
