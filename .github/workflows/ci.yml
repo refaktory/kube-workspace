@@ -24,14 +24,13 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Set up rustup
-        run: "rustup default $RUST_VERSION && rustup component add clippy"
+        run: "rustup update $RUST_VERSION && rustup default $RUST_VERSION && rustup component add clippy"
 
       - name: rustc info
         run: "rustup run $RUST_VERSION rustc --version && rustup run stable cargo --version"
       
       - name: Operator
-        run: "rustup run stable cargo xtask ci-rust"
-
+        run: "rustup run $RUST_VERSION cargo xtask ci-rust"
 
       - name: Install Python dependencies
         run: "pip install black pylint mypy"
