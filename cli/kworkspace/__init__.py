@@ -530,7 +530,7 @@ def run() -> None:
     ssh_public_key = ""
     if not ssh_key_path:
         ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
-    ssh_private_key_path = ssh_key_path.removesuffix(".pub")
+    ssh_private_key_path = ssh_key_path.rsplit(".pub", 1)[0]
 
     if os.path.isfile(ssh_key_path):
         with open(ssh_key_path) as keyfile:
