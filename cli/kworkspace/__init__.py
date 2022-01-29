@@ -151,7 +151,8 @@ class Config:
     """Materialized CLI config."""
 
     username: str
-    ssh_key: str
+    ssh_public_key: str
+    ssh_private_key_path: str
     api_url: str
 
     def api_endpoint(self) -> str:
@@ -168,7 +169,8 @@ class SshAddress:
 
     def build_ssh_command(self, config: Config, extra_args: list[str]) -> list[str]:
         "Build the ssh command for a specific address and user(config)."
-        parts = ["ssh"]
+
+        parts = ["ssh", "-i", config.ssh_private_key_path]
         if self.port != 22:
             parts += ["-p", str(self.port)]
         parts += extra_args
@@ -283,7 +285,7 @@ class Api:
         query = {
             what: {
                 "username": self.config.username,
-                "ssh_public_key": self.config.ssh_key,
+                "ssh_public_key": self.config.ssh_public_key,
             },
         }
         data = self.query(query)
@@ -524,13 +526,15 @@ def run() -> None:
     file = ConfigFile.load(not args.api_url, custom_path=args.config_path)
 
     user = args.user or file.username or host_username()
-    ssh_key_path = args.ssh_key_path or file.ssh_key_path
+    ssh_key_path = args.ssh_key_path or file.ssh_key_path or ""
+    ssh_public_key = ""
     if not ssh_key_path:
         ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
+    ssh_private_key_path = ssh_key_path.removesuffix(".pub")
 
     if os.path.isfile(ssh_key_path):
         with open(ssh_key_path) as keyfile:
-            ssh_key = keyfile.read().strip()
+            ssh_public_key = keyfile.read().strip()
     else:
         log(
             "Error: Could not determine ssh key path to use: no file at " + ssh_key_path
@@ -547,7 +551,8 @@ def run() -> None:
 
     config = Config(
         username=user,
-        ssh_key=ssh_key,
+        ssh_public_key=ssh_public_key,
+        ssh_private_key_path=ssh_private_key_path,
         api_url=url,
     )
     api = Api(config)
