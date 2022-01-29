@@ -31,12 +31,15 @@ Access to workspaces is only possible via SSH with the private key.
 
 ## Usage - CLI
 
+
+
 The CLI provides a convenient shell interface for starting and stopping workspaces.
 
 **NOTE**: An administrator has to add your SSH public key to the authorized keys
 before you can use the CLI.
 
-See [Deploy] below for how to configure and deploy the project to  a Kubernetes cluster.
+(See [Deploy] below for how to configure and deploy the project to a Kubernetes cluster.)
+
 
 ### Installation:
 
@@ -74,6 +77,10 @@ The CLI makes this easy:
 
 **Note**: the port forward only remains active for the livetime of the SSH session.
 So don't close the terminal!
+
+## Deploy
+
+TODO
 
 ## Development
 
