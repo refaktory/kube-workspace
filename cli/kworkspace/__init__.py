@@ -22,6 +22,10 @@ import subprocess
 AnyDict = Dict[str, Any]
 
 
+def log(*args, **kwargs) -> None:
+    print(*args, file=sys.stderr, **kwargs)
+
+
 def host_username() -> str:
     """Get the current username from the OS."""
     return getpass.getuser()
@@ -56,26 +60,26 @@ class ConfigFile:
         default_ssh_key_path = os.path.expanduser("~/.ssh/id_rsa.pub")
         ssh_path: Optional[str]
         if os.path.isfile(default_ssh_key_path):
-            print("Default SSH key detected at " + default_ssh_key_path)
+            log("Default SSH key detected at " + default_ssh_key_path)
             while True:
                 ssh_path = input(
                     "Alternative key (leave empty to use default): "
                 ).strip()
                 if ssh_path:
                     if not os.path.isfile(ssh_path):
-                        print("Path is not valid")
+                        log("Path is not valid")
                     else:
                         break
                 else:
                     ssh_path = default_ssh_key_path
                     break
         else:
-            print("No default SSH key detected")
+            log("No default SSH key detected")
             while True:
                 ssh_path = input("SSH key path: ").strip()
                 if ssh_path:
                     if not os.path.isfile(ssh_path):
-                        print("Path is not valid")
+                        log("Path is not valid")
                     else:
                         break
         return ssh_path
@@ -115,7 +119,7 @@ class ConfigFile:
             os.makedirs(config_dir)
         with open(path, mode="w") as file:
             json.dump(asdict(config), file)
-        print(f"Config written to {path}")
+        log(f"Config written to {path}")
         return config
 
     @staticmethod
@@ -324,12 +328,12 @@ def await_workspace_available(api: Api) -> WorkspaceStatus:
     while True:
         res = api.pod_start()
         if res.phase != current_phase:
-            print(f"\n{res.phase.value}->", end="")
+            log(f"\n{res.phase.value}->", end="")
             current_phase = res.phase
         if res.phase == WorkspacePhase.READY and res.ssh_address is not None:
-            print("")
+            log("")
             return res
-        print("*", end="", flush=True)
+        log("*", end="", flush=True)
         time.sleep(2)
 
 
@@ -339,16 +343,16 @@ def run_start(api: Api) -> WorkspaceStatus:
     status = api.pod_status()
     ssh = status.ssh_address
     if status.phase == WorkspacePhase.READY and ssh:
-        print("Your workspace is already running!")
-        print(status.render_info(api.config))
+        log("Your workspace is already running!")
+        log(status.render_info(api.config))
         return status
 
     curent_phase = status.phase
-    print(f"Launching your workspace from phase: {curent_phase.value}")
-    print("This might take a few minutes. Please be patient.")
+    log(f"Launching your workspace from phase: {curent_phase.value}")
+    log("This might take a few minutes. Please be patient.")
     res = await_workspace_available(api)
 
-    print("\nPod is ready!")
+    log("\nPod is ready!")
     return res
 
 
@@ -362,16 +366,16 @@ def run_connect(api: Api, port_forwards: list[str], user_command: list[str]) -> 
             spec = PortForwardSpec.parse(forward)
             extra_args += spec.build_ssh_args()
         except Exception as err:  # pylint: disable=broad-except
-            print(f'INVALID port-forward spec "{forward}": {err}')
-            print('Consult "kworkspace connect --help"')
+            log(f'INVALID port-forward spec "{forward}": {err}')
+            log('Consult "kworkspace connect --help"')
             sys.exit(1)
 
     if status.ssh_address:
         ssh_cmd = status.ssh_address.build_ssh_command(api.config, extra_args)
         cmd = ssh_cmd + user_command
 
-        print("Connecting via SSH...")
-        print("Running command: " + " ".join(cmd))
+        log("Connecting via SSH...")
+        log("Running command: " + " ".join(cmd))
         subprocess.run(cmd, check=True)
     else:
         # Only there to satisfy the type checker.
@@ -383,19 +387,19 @@ def run_stop(api: Api) -> None:
 
     status = api.pod_status()
     if status.phase == WorkspacePhase.NOT_FOUND:
-        print("Your workspace is already stopped")
+        log("Your workspace is already stopped")
         return
 
-    print("Stopping workspace...")
+    log("Stopping workspace...")
     api.pod_stop()
     while True:
         res = api.pod_status()
         if res.phase == WorkspacePhase.NOT_FOUND:
             break
-        print("*", end="")
+        log("*", end="")
         time.sleep(2)
-    print("\nWorkspace was shut down.")
-    print("Run workspaces.py start to start it again")
+    log("\nWorkspace was shut down.")
+    log("Run workspaces.py start to start it again")
 
 
 @dataclass
@@ -528,15 +532,15 @@ def run() -> None:
         with open(ssh_key_path) as keyfile:
             ssh_key = keyfile.read().strip()
     else:
-        print(
+        log(
             "Error: Could not determine ssh key path to use: no file at " + ssh_key_path
         )
-        print("Configure key in config or with --ssh-key-path=PATH")
+        log("Configure key in config or with --ssh-key-path=PATH")
         sys.exit(1)
 
     url = args.api_url or file.api_url
     if not url:
-        print(
+        log(
             "Error: Could not determine API endpoint: specify in config or with --api=http://..."
         )
         sys.exit(1)
