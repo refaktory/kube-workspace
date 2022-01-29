@@ -1,6 +1,10 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+    io::Read,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
-use anyhow::{anyhow, Context, Error as AnyError};
+use anyhow::{anyhow, bail, Context, Error as AnyError};
 
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -19,6 +23,7 @@ fn main() -> Result<(), AnyError> {
         ["ci-rust"] => ci_rust(),
         ["ci-cli"] => ci_cli(),
         ["ci"] => ci(),
+        ["test-end2end"] => end_to_end_test(false),
         other => return Err(anyhow!("Unknown arguments: {:?}", other)),
     }
 }
@@ -236,29 +241,51 @@ fn cmd_docker_build() -> Result<(), AnyError> {
 fn kind_install() -> Result<(), AnyError> {
     let (image_name_operator, _image_name_cli) = build_all_docker_images()?;
 
+    eprintln!("Loading docker image into kind...");
     Command::new("kind")
         .arg("load")
         .arg("docker-image")
         .arg(&image_name_operator)
-        .run_checked()?;
+        .run_checked()
+        .context("Could not load docker image")?;
 
     let tag = image_name_operator
         .split(':')
         .nth(1)
         .context("Could not parse image tag")?;
 
+    eprintln!("Upgrading/installing helm chart...");
     Command::new("helm")
         .args([
             "upgrade",
             "--install",
+            "--wait-for-jobs",
             "kube-workspace",
             "./deploy/helm",
+            "--values",
+            "./tests/fixtures/values.yaml",
             "--set",
             "image.pullPolicy=Never",
             "--set",
             &format!("image.tag={}", tag),
         ])
-        .run_checked()?;
+        .run_checked()
+        .context("Could not run 'helm upgrade'")?;
+
+    eprintln!("Restarting operator...");
+    Command::new("kubectl")
+        .args(&[
+            "delete",
+            "--namespace",
+            "default",
+            "pods",
+            "-l",
+            "app.kubernetes.io/name=kube-workspace-operator",
+        ])
+        .run_checked()
+        .context("Could not delete operator pods")?;
+
+    eprintln!("Operator was installed in cluster!");
 
     Ok(())
 }
@@ -280,4 +307,76 @@ fn ci() -> Result<(), AnyError> {
     let b = ci_rust();
     let a = ci_cli();
     a.and(b)
+}
+
+fn end_to_end_test(create: bool) -> Result<(), AnyError> {
+    let cli_path = root_dir()?
+        .join("cli")
+        .join("kworkspace")
+        .join("__init__.py");
+    let fixtures_path = root_dir()?.join("tests").join("fixtures");
+    let ssh_fixtures_path = fixtures_path.join("ssh_keys");
+    let key1_path = ssh_fixtures_path.join("key1.pub");
+
+    let api_port = 33333;
+
+    if create {
+        unimplemented!();
+    }
+
+    kind_install().context("Could not install operator into cluster")?;
+
+    // Make operator ip accessible.
+    let _t = std::thread::spawn(move || {
+        let res = Command::new("kubectl")
+            .args(&[
+                "--namespace",
+                "default",
+                "port-forward",
+                "service/kube-workspace-kube-workspace-operator",
+                &format!("{api_port}:http"),
+            ])
+            .run_checked();
+        if let Err(err) = res {
+            eprintln!("Port forward failed! {:?}", err);
+            std::process::exit(1);
+        }
+    });
+
+    // sleep a bit to allow port forward to become active.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    eprintln!("Running 'kworkspace connect echo hello'");
+    let mut proc = Command::new(&cli_path)
+        .args(&[
+            "--user",
+            "test1",
+            "--ssh-key-path",
+            &key1_path.display().to_string(),
+            "--api",
+            &format!("http://localhost:{api_port}"),
+            "connect",
+            "echo",
+            "hello",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let mut stdout_handle = proc.stdout.take().unwrap();
+    let mut stdout = Vec::new();
+
+    stdout_handle.read_to_end(&mut stdout)?;
+    let status = proc.wait()?;
+    let stdout_str = String::from_utf8(stdout)?;
+
+    if !status.success() {
+        bail!("kworkspace connect failed",);
+    }
+
+    if stdout_str != "hello" {
+        bail!("Expected stdout to say 'hello'");
+    }
+
+    Ok(())
 }
