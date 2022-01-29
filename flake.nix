@@ -27,7 +27,21 @@
               let
                 filename = (baseNameOf path);
                 # TODO: only filter main path, not nested paths too
-                included = !(builtins.elem filename [ ".github" ".gitignore" "flake.nix" "flake.lock" "cli" "deploy" "xtask" ".git" ]);
+                included = !(builtins.elem filename
+                  [
+                    ".git"
+                    ".github"
+                    ".mypy_cache"
+                    "cli"
+                    "deploy"
+                    "result"
+                    "tests"
+                    "xtask"
+                    ".gitignore"
+                    "flake.lock"
+                    "flake.nix"
+                    ".git"
+                  ]);
               in
               included
             )
