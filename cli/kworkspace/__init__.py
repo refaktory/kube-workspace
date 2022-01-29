@@ -22,8 +22,14 @@ import subprocess
 AnyDict = Dict[str, Any]
 
 
-def log(*args, **kwargs) -> None:
-    print(*args, file=sys.stderr, **kwargs)
+def log(*args: Any, **kwargs: Any) -> None:
+    """Print to stderr.
+    Defers to print()"""
+    print(
+        *args,
+        **kwargs,
+        file=sys.stderr,
+    )
 
 
 def host_username() -> str:
@@ -117,7 +123,7 @@ class ConfigFile:
         config_dir = os.path.dirname(path)
         if not os.path.isdir(config_dir):
             os.makedirs(config_dir)
-        with open(path, mode="w") as file:
+        with open(path, mode="w", encoding="utf8") as file:
             json.dump(asdict(config), file)
         log(f"Config written to {path}")
         return config
@@ -132,7 +138,7 @@ class ConfigFile:
         path: str = custom_path or ConfigFile.user_path()
         if os.path.isfile(path):
             data: Optional[Dict[str, str]] = None
-            with open(path) as file:
+            with open(path, encoding="utf8") as file:
                 data = json.load(file)
             if not data:
                 return ConfigFile(None, None, None)
@@ -270,7 +276,7 @@ class Api:
             headers={"content-type": "application/json"},
             data=data_json,
         )
-        res = urllib.request.urlopen(req)
+        res = urllib.request.urlopen(req)  # pylint: disable=consider-using-with
         res_data = json.load(res)
         if "Ok" in res_data:
             data = res_data["Ok"]
@@ -533,7 +539,7 @@ def run() -> None:
     ssh_private_key_path = ssh_key_path.removesuffix(".pub")
 
     if os.path.isfile(ssh_key_path):
-        with open(ssh_key_path) as keyfile:
+        with open(ssh_key_path, encoding="utf8") as keyfile:
             ssh_public_key = keyfile.read().strip()
     else:
         log(
