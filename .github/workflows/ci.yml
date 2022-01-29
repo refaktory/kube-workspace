@@ -14,14 +14,19 @@ jobs:
   rust:
     strategy:
       matrix:
-        rust: [stable, nightly]
+        rust-channel: [stable, nightly]
+        python-version: ["3.8"]
     runs-on: ubuntu-latest
     env:
-      RUST_VERSION: ${{ matrix.rust }}
+      RUST_VERSION: ${{ matrix.rust-channel }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up rustup
         run: "rustup update $RUST_VERSION && rustup default $RUST_VERSION && rustup component add clippy && rustup component add rustfmt"
